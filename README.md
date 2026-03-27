@@ -1,36 +1,38 @@
-# UtilityWatch
+# UFixr
 
-UtilityWatch is a beginner-friendly full-stack hackathon MVP with three parts:
+UFixr is a full-stack utility fault reporting project with three parts:
 
-- `backend/`: FastAPI + SQLite + DBSCAN clustering + priority scoring
+- `backend/`: FastAPI + SQLite backend with clustering and priority scoring
 - `mobile/`: Expo React Native citizen app
 - `admin/`: React + Vite admin dashboard
 
-## What is already built
+## What it does
 
-- citizen sign up and login with phone + password
-- GPS-based fault reporting for electricity or water
+- user sign up and login with phone + password
+- electricity and water fault reporting
 - optional photo upload
-- live fault map in the mobile app
-- DBSCAN outage clustering on the backend
-- automatic priority scoring based on report count, severity, age, and utility type
-- admin dashboard with map, ranked clusters, and status update buttons
-- citizen notification feed when admin changes status
+- location-based reporting
+- outage clustering on the backend
+- priority scoring for utility teams
+- admin dashboard with map and cluster status updates
+- in-app alerts when report status changes
 
-## Important demo note
+## Project structure
 
-This project includes the full app flow, but real push notifications through Firebase FCM are **not** wired yet. For the hackathon demo, status updates appear in the app's `Alerts` screen instead. That keeps the app easy to run locally for your first build.
+- [backend/README.md](/d:/Akshay/Hackverse%20college%20hackathon/backend/README.md)
+- [mobile/App.tsx](/d:/Akshay/Hackverse%20college%20hackathon/mobile/App.tsx)
+- [admin/README.md](/d:/Akshay/Hackverse%20college%20hackathon/admin/README.md)
 
-## 1. Install tools first
+## Prerequisites
 
-You need these installed on your laptop:
+Install these first:
 
-1. Python 3.11 or newer
-2. Node.js 20 or newer
-3. Git
-4. Expo Go app on your Android phone from Play Store
+- Python 3.11+
+- Node.js 20+
+- Git
+- Expo Go on an Android phone if you want to test the mobile app on-device
 
-To check if Python and Node are installed, open PowerShell and run:
+Check your versions:
 
 ```powershell
 python --version
@@ -38,181 +40,171 @@ node --version
 npm --version
 ```
 
-## 2. Open the project
-
-In PowerShell:
+## 1. Clone the repo
 
 ```powershell
-cd "d:\Akshay\Hackverse college hackathon"
+git clone https://github.com/akshay-agile/UFixr.git
+cd UFixr
 ```
 
-## 3. Start the backend server
+## 2. Start the backend
 
-Open a new PowerShell window and run:
+Open a terminal:
 
 ```powershell
-cd "d:\Akshay\Hackverse college hackathon\backend"
+cd backend
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-What this does:
+The backend will be available at:
 
-- creates a Python virtual environment
-- installs backend packages
-- starts the API at `http://127.0.0.1:8000`
-- creates the SQLite database automatically on first run
-
-To test the backend, open this in your browser:
-
+- `http://127.0.0.1:8000`
 - `http://127.0.0.1:8000/health`
 
-You should see:
+Expected health response:
 
 ```json
 {"status":"ok"}
 ```
 
-## 4. Find your laptop's local IP address
+Notes:
 
-The phone needs to talk to your laptop over Wi-Fi.
+- the SQLite database is created automatically on first run
+- uploaded report images are stored in `backend/app/uploads`
 
-In another PowerShell window run:
+## 3. Start the admin dashboard
+
+Open another terminal:
+
+```powershell
+cd admin
+npm install
+npm run dev
+```
+
+Then open the local Vite URL, usually:
+
+- `http://127.0.0.1:5173`
+
+Important:
+
+- the admin app currently expects the backend at `http://127.0.0.1:8000`
+- keep the backend running while using the admin dashboard
+
+## 4. Start the mobile app
+
+The mobile app must talk to your laptop over Wi-Fi, so you need your laptop's local IP address.
+
+Find it with:
 
 ```powershell
 ipconfig
 ```
 
-Look for your Wi-Fi adapter and find the `IPv4 Address`.
-It will look something like `192.168.1.8`.
+Look for your Wi-Fi adapter's `IPv4 Address`, for example `192.168.1.8`.
 
-## 5. Update the mobile app backend URL
-
-Open this file:
-
-- `mobile/src/api/config.ts`
-
-Change this line:
+Then update [mobile/src/api/config.ts](/d:/Akshay/Hackverse%20college%20hackathon/mobile/src/api/config.ts):
 
 ```ts
-export const API_BASE_URL = "http://127.0.0.1:8000";
+export const API_BASE_URL = "http://YOUR_LAPTOP_IP:8000";
 ```
 
-To something like:
+Example:
 
 ```ts
 export const API_BASE_URL = "http://192.168.1.8:8000";
 ```
 
-Use your real IPv4 address, not the example one above.
-
-## 6. Start the mobile app
-
-Open a new PowerShell window and run:
+Then start Expo:
 
 ```powershell
-cd "d:\Akshay\Hackverse college hackathon\mobile"
+cd mobile
 npm install
-npm start
+npx expo start --host lan --clear
 ```
 
 Then:
 
-1. Keep your laptop and phone on the same Wi-Fi
-2. A QR code will appear in the terminal/browser
-3. Open Expo Go on your phone
-4. Scan the QR code
-5. The app should open on your phone
+1. Keep your phone and laptop on the same Wi-Fi.
+2. Open Expo Go on your phone.
+3. Scan the QR code or manually enter the `exp://...` URL shown by Expo.
 
-If the app cannot connect to the backend:
+## 5. Full demo flow
 
-- check that backend is still running
-- check that `API_BASE_URL` uses your laptop's IPv4 address
-- check that phone and laptop are on the same Wi-Fi
-- allow Python through Windows Firewall if prompted
+1. Start the backend.
+2. Start the admin dashboard.
+3. Start the mobile app.
+4. Register a user in the app.
+5. Submit one or more water or electricity reports.
+6. Open the admin dashboard and update a cluster status.
+7. Go back to the app and check `Alerts`.
 
-## 7. Start the admin dashboard
+## Common setup issues
 
-Open a new PowerShell window and run:
+### PowerShell blocks venv activation
 
-```powershell
-cd "d:\Akshay\Hackverse college hackathon\admin"
-npm install
-npm run dev
-```
-
-Then open the local URL shown by Vite, usually:
-
-- `http://127.0.0.1:5173`
-
-## 8. Test the full flow
-
-Use this order:
-
-1. Register in the mobile app
-2. Open `Report Fault`
-3. Allow location permission
-4. Submit 1 or more reports
-5. Open `My Reports` to see your submissions
-6. Open the admin dashboard in your browser
-7. Click `Acknowledge` or `In Progress` on a cluster
-8. Go back to the mobile app and open `Alerts`
-9. You should see the status update there
-
-## 9. How clustering works in this app
-
-- reports with the same utility type are grouped using DBSCAN
-- if at least 3 active reports are close together, they become one outage cluster
-- smaller isolated reports still appear as their own cluster-like item for visibility
-- electricity gets a higher score than water
-- older and more frequently reported issues get higher priority
-
-## 10. Hackathon demo script
-
-Say this while showing the app:
-
-1. "A resident sees no power and reports it in under 30 seconds."
-2. "Our backend immediately clusters nearby complaints using DBSCAN."
-3. "Instead of 8 complaints, the utility team sees 1 outage cluster."
-4. "We score each cluster by urgency so the most critical issue rises to the top."
-5. "When the admin updates the status, the citizen sees the change in real time in the alerts feed."
-
-## 11. Folder guide
-
-- `backend/app/main.py`: API routes
-- `backend/app/ml.py`: DBSCAN clustering and priority score logic
-- `backend/app/services.py`: reclustering and notification logic
-- `mobile/App.tsx`: app navigation
-- `mobile/src/screens/ReportFaultScreen.tsx`: report submission screen
-- `admin/src/App.tsx`: admin dashboard
-
-## 12. Common beginner problems
-
-### `python` is not recognized
-Install Python and make sure "Add Python to PATH" was checked during installation.
-
-### PowerShell blocks virtual environment activation
-Run this once in PowerShell as your normal user:
+Run once:
 
 ```powershell
 Set-ExecutionPolicy -Scope CurrentUser RemoteSigned
 ```
 
-Then try activating the venv again.
+### Mobile app cannot reach backend
 
-### Expo QR code opens but app keeps loading
-Usually this means the backend URL is wrong or the phone cannot reach the laptop.
+Check all of these:
+
+- backend is running on port `8000`
+- `mobile/src/api/config.ts` uses your laptop's real Wi-Fi IP
+- phone and laptop are on the same Wi-Fi
+- Windows Firewall allowed Python
+
+### Expo opens but app bundle does not load
+
+Try:
+
+```powershell
+cd mobile
+npx expo start --host lan --clear
+```
+
+If Expo shows `127.0.0.1` instead of your LAN IP, set the packager hostname explicitly:
+
+```powershell
+$env:REACT_NATIVE_PACKAGER_HOSTNAME="YOUR_LAPTOP_IP"
+npx expo start --host lan --clear
+```
+
+### Admin dashboard map is blank
+
+Check:
+
+- the backend is running
+- `/admin/clusters` returns data
+- cluster coordinates are present in backend responses
 
 ### Photo upload fails
-Make sure the backend server is running and Windows Firewall allowed Python.
 
-## 13. What to improve next after this MVP
+Check:
 
-- real JWT auth instead of demo sessions
+- backend is running
+- phone can reach the backend IP
+- Windows Firewall is not blocking Python
+
+## Notes for reviewers
+
+- this project is meant as a hackathon MVP
+- notifications are shown inside the app and are not Firebase push notifications yet
+- SQLite is used for local simplicity
+
+## Future improvements
+
+- move config to env files instead of editing source files
+- real JWT auth
 - PostgreSQL instead of SQLite
-- real Firebase FCM push notifications
-- proper nearby filtering and heatmaps
-- admin login and role-based access
-- deployment to Render, Railway, or VPS
+- cloud image storage
+- Firebase push notifications
+- admin authentication and roles
+- deployment for backend, admin, and mobile builds
