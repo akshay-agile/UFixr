@@ -1,0 +1,16 @@
+{
+  "expo": {
+    "name": "UFixr",
+    "slug": "ufixr",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "assetBundlePatterns": ["**/*"],
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "package": "com.ufixr.app"
+    },
+    "plugins": ["expo-location", "expo-image-picker"]
+  }
+}

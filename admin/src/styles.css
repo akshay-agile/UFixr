@@ -1,0 +1,180 @@
+:root {
+  font-family: "Segoe UI", sans-serif;
+  color: #102a43;
+  background: linear-gradient(135deg, #f6efe5, #e7f0f7);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+.page {
+  min-height: 100vh;
+  padding: 24px;
+}
+
+.hero {
+  display: flex;
+  justify-content: space-between;
+  gap: 20px;
+  padding: 28px;
+  background: rgba(255, 255, 255, 0.8);
+  border-radius: 24px;
+  margin-bottom: 20px;
+}
+
+.eyebrow {
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: #b85c38;
+  font-weight: 700;
+}
+
+h1,
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+.subtext {
+  margin-top: 12px;
+  max-width: 700px;
+  color: #486581;
+}
+
+.heroStats {
+  display: flex;
+  gap: 16px;
+}
+
+.statCard {
+  min-width: 140px;
+  background: #102a43;
+  color: white;
+  border-radius: 20px;
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.statCard strong {
+  font-size: 28px;
+}
+
+.contentGrid {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr;
+  gap: 20px;
+}
+
+.mapPanel {
+  min-height: 640px;
+  overflow: hidden;
+  border-radius: 24px;
+}
+
+.sidePanel {
+  background: rgba(255, 255, 255, 0.82);
+  border-radius: 24px;
+  padding: 20px;
+  max-height: 640px;
+  overflow: auto;
+}
+
+.panelHeader {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 16px;
+}
+
+button {
+  border: none;
+  border-radius: 12px;
+  padding: 10px 14px;
+  background: #1f6f8b;
+  color: white;
+  cursor: pointer;
+}
+
+.clusterCard {
+  background: #fffdf8;
+  border-radius: 18px;
+  padding: 18px;
+  margin-bottom: 16px;
+}
+
+.clusterTop {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.pill {
+  padding: 6px 10px;
+  border-radius: 999px;
+  text-transform: capitalize;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.pill.electricity {
+  background: #ffe6a7;
+}
+
+.pill.water {
+  background: #bde0fe;
+}
+
+.actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 14px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+
+.reportsList {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.reportRow {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #e9dac1;
+}
+
+.reportRow p {
+  color: #486581;
+  margin-top: 4px;
+}
+
+.reportRow img {
+  width: 72px;
+  height: 72px;
+  object-fit: cover;
+  border-radius: 12px;
+}
+
+@media (max-width: 960px) {
+  .hero,
+  .contentGrid {
+    grid-template-columns: 1fr;
+    display: grid;
+  }
+
+  .heroStats {
+    flex-direction: column;
+  }
+}
