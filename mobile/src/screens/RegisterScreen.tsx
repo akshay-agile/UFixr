@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
+import { Alert, Pressable, StyleSheet, Text, View, ActivityIndicator } from "react-native";
 import Screen from "../components/Screen";
 import FormInput from "../components/FormInput";
 import { useAuth } from "../context/AuthContext";
@@ -11,110 +11,157 @@ export default function RegisterScreen({ navigation }: any) {
   const [name, setName] = useState("");
   const [phone, setPhone] = useState("");
   const [password, setPassword] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
 
   const onSubmit = async () => {
+    if (!name.trim() || !phone.trim() || !password.trim()) {
+      Alert.alert("Missing fields", "Please fill in all fields");
+      return;
+    }
     try {
+      setIsLoading(true);
       await register(name, phone, password);
     } catch (error) {
       Alert.alert("Registration failed", error instanceof Error ? error.message : "Unknown error");
+    } finally {
+      setIsLoading(false);
     }
   };
 
   return (
     <Screen>
-      <View style={styles.headerCard}>
-        <BrandLogo size={70} />
-        <Text style={styles.kicker}>Get started</Text>
-        <Text style={styles.title}>Create account</Text>
-        <Text style={styles.subtitle}>Stay notified when crews acknowledge, start, and resolve nearby faults.</Text>
-      </View>
+      <View style={styles.container}>
+        {/* Header Section */}
+        <View style={styles.headerSection}>
+          <BrandLogo size={56} />
+          <Text style={styles.title}>Create Account</Text>
+          <Text style={styles.subtitle}>Join the UFixr community</Text>
+        </View>
 
-      <View style={styles.formCard}>
-        <FormInput label="Name" value={name} onChangeText={setName} placeholder="Akshay" />
-        <FormInput label="Phone" value={phone} onChangeText={setPhone} placeholder="9876543210" />
-        <FormInput label="Password" value={password} onChangeText={setPassword} secureTextEntry />
-        <Pressable style={styles.button} onPress={onSubmit}>
-          <Text style={styles.buttonText}>Register</Text>
-          <View style={styles.arrowBox}><Text style={styles.arrow}>{">"}</Text></View>
-        </Pressable>
-      </View>
+        {/* Form Section */}
+        <View style={styles.formSection}>
+          <View style={styles.formCard}>
+            <FormInput 
+              label="Your Name" 
+              value={name} 
+              onChangeText={setName} 
+              placeholder="e.g., Akshay Kumar"
+            />
+            <FormInput 
+              label="Phone Number" 
+              value={phone} 
+              onChangeText={setPhone} 
+              placeholder="987654321"
+            />
+            <FormInput 
+              label="Password" 
+              value={password} 
+              onChangeText={setPassword} 
+              secureTextEntry 
+              placeholder="••••••••"
+            />
+          </View>
 
-      <Pressable style={styles.linkWrap} onPress={() => navigation.goBack()}>
-        <Text style={styles.link}>Already have an account? Login</Text>
-      </Pressable>
+          <Pressable 
+            style={[styles.submitButton, isLoading && styles.submitButtonDisabled]} 
+            onPress={onSubmit}
+            disabled={isLoading}
+          >
+            {isLoading ? (
+              <ActivityIndicator color={T.textInvert} size="small" />
+            ) : (
+              <Text style={styles.submitButtonText}>Create Account</Text>
+            )}
+          </Pressable>
+
+          <Pressable style={styles.secondaryButton} onPress={() => navigation.goBack()}>
+            <Text style={styles.secondaryButtonText}>Already have an account? Login</Text>
+          </Pressable>
+        </View>
+
+        {/* Footer Info */}
+        <View style={styles.footer}>
+          <Text style={styles.footerText}>Report utility faults in your area</Text>
+          <Text style={styles.footerText}>Help your community stay informed</Text>
+        </View>
+      </View>
     </Screen>
   );
 }
 
 const styles = StyleSheet.create({
-  headerCard: {
-    marginTop: 20,
-    marginBottom: 18,
-    backgroundColor: T.ink,
-    borderRadius: 22,
-    padding: 22,
+  container: {
+    flex: 1,
+    justifyContent: "space-between",
+    padding: 24,
   },
-  kicker: {
-    fontSize: 10,
-    color: "rgba(255,255,255,0.45)",
-    fontWeight: "700",
-    letterSpacing: 1.2,
-    textTransform: "uppercase",
-    marginBottom: 8,
+  headerSection: {
+    alignItems: "center",
+    marginTop: 40,
   },
   title: {
-    fontSize: 30,
+    fontSize: 36,
     fontWeight: "800",
-    color: T.white,
-    letterSpacing: -1,
+    color: T.text,
+    marginTop: 16,
+    letterSpacing: -0.5,
   },
   subtitle: {
-    marginTop: 10,
-    fontSize: 14,
-    lineHeight: 20,
-    color: "rgba(255,255,255,0.72)",
+    fontSize: 13,
+    color: T.textSecondary,
+    marginTop: 6,
+    fontWeight: "500",
+    letterSpacing: 0.3,
+  },
+  formSection: {
+    gap: 16,
   },
   formCard: {
-    backgroundColor: T.white,
-    borderRadius: 20,
-    padding: 16,
-    borderWidth: 1,
-    borderColor: T.line,
-  },
-  button: {
-    marginTop: 8,
+    backgroundColor: T.surface,
     borderRadius: 16,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: T.border,
+    gap: 4,
+  },
+  submitButton: {
+    backgroundColor: T.primary,
+    borderRadius: 12,
     padding: 16,
-    backgroundColor: T.ink,
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "space-between",
-  },
-  buttonText: {
-    color: T.white,
-    fontSize: 16,
-    fontWeight: "800",
-  },
-  arrowBox: {
-    width: 32,
-    height: 32,
-    borderRadius: 10,
-    backgroundColor: T.electric,
     alignItems: "center",
     justifyContent: "center",
+    marginTop: 8,
   },
-  arrow: {
-    color: T.white,
-    fontSize: 16,
-    fontWeight: "800",
+  submitButtonDisabled: {
+    opacity: 0.7,
   },
-  linkWrap: {
+  submitButtonText: {
+    color: T.textInvert,
+    fontSize: 15,
+    fontWeight: "700",
+    letterSpacing: 0.2,
+  },
+  secondaryButton: {
+    borderRadius: 12,
+    padding: 14,
+    borderWidth: 1.5,
+    borderColor: T.border,
     alignItems: "center",
-    marginTop: 18,
   },
-  link: {
-    color: T.inkSoft,
-    fontWeight: "600",
+  secondaryButtonText: {
+    color: T.primary,
+    fontSize: 15,
+    fontWeight: "700",
+  },
+  footer: {
+    alignItems: "center",
+    gap: 4,
+    marginBottom: 20,
+  },
+  footerText: {
+    fontSize: 12,
+    color: T.textTertiary,
+    fontWeight: "500",
   },
 });
 

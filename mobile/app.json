@@ -11,6 +11,12 @@
     "android": {
       "package": "com.ufixr.app"
     },
-    "plugins": ["expo-location", "expo-image-picker"]
+    "plugins": [
+      "expo-location",
+      "expo-image-picker",
+      ["expo-camera", {
+        "cameraPermission": "Allow UFixr to access your camera"
+      }]
+    ]
   }
 }

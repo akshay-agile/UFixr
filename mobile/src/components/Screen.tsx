@@ -1,6 +1,7 @@
 import React from "react";
 import { ScrollView, StyleSheet, View } from "react-native";
 import { SafeAreaView } from "react-native-safe-area-context";
+import { T } from "../theme";
 
 export default function Screen({ children }: { children: React.ReactNode }) {
   return (
@@ -15,7 +16,7 @@ export default function Screen({ children }: { children: React.ReactNode }) {
 const styles = StyleSheet.create({
   safe: {
     flex: 1,
-    backgroundColor: "#f7f1e5",
+    backgroundColor: T.background,
   },
   content: {
     padding: 20,

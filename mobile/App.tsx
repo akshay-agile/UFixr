@@ -35,10 +35,10 @@ const NavTheme = {
 type TabName = "Home" | "Report Fault" | "My Reports" | "Alerts";
 
 const TAB_CONFIG: Record<TabName, { icon: string; label: string }> = {
-  Home: { icon: "�", label: "Home" },
-  "Report Fault": { icon: "+", label: "Report" },
-  "My Reports": { icon: "R", label: "Reports" },
-  Alerts: { icon: "A", label: "Alerts" },
+  Home: { icon: "🏠", label: "Home" },
+  "Report Fault": { icon: "⚡", label: "Report" },
+  "My Reports": { icon: "📋", label: "Reports" },
+  Alerts: { icon: "🔔", label: "Alerts" },
 };
 
 const Stack = createNativeStackNavigator();
@@ -49,43 +49,49 @@ function AppTabs() {
     <Tabs.Navigator
       screenOptions={({ route }) => {
         const cfg = TAB_CONFIG[route.name as TabName];
-        const isReport = route.name === "Report Fault";
 
         return {
           headerShown: false,
           tabBarStyle: {
             backgroundColor: T.white,
             borderTopColor: T.line,
-            height: 84,
-            paddingBottom: 20,
-            paddingTop: 8,
+            borderTopWidth: 1,
+            height: 90,
+            paddingBottom: 12,
+            paddingTop: 12,
+            elevation: 8,
+            shadowColor: "#000",
+            shadowOffset: { width: 0, height: -2 },
+            shadowOpacity: 0.1,
+            shadowRadius: 8,
           },
           tabBarActiveTintColor: T.electric,
-          tabBarInactiveTintColor: T.inkFaint,
-          tabBarLabelStyle: {
-            fontSize: 10,
-            fontWeight: "600",
-            marginTop: -2,
+          tabBarInactiveTintColor: "#999",
+          tabBarActiveBackgroundColor: "transparent",
+          tabBarInactiveBackgroundColor: "transparent",
+          tabBarItemStyle: {
+            backgroundColor: "transparent",
+            justifyContent: "center",
+            alignItems: "center",
           },
-          tabBarIcon: ({ focused, color }: { focused: boolean; color: string }) => {
-            if (isReport) {
-              return (
-                <View style={styles.reportFab}>
-                  <Text style={styles.reportFabIcon}>+</Text>
-                </View>
-              );
-            }
-
-            return (
-              <View style={[styles.tabIconWrap, focused && styles.tabIconWrapActive]}>
-                <Text style={[styles.tabIcon, { color }]}>{cfg.icon}</Text>
-              </View>
-            );
-          },
-          tabBarLabel: ({ focused }: { focused: boolean }) => (
-            <Text style={[styles.tabLabel, { color: focused ? T.electric : T.inkFaint }]}>
-              {cfg.label}
-            </Text>
+          tabBarShowLabel: false,
+          tabBarIcon: ({ focused, color }: { focused: boolean; color: string }) => (
+            <View style={[styles.tabPill, focused && styles.tabPillActive]}>
+              <Text
+                style={[
+                  styles.tabIcon,
+                  {
+                    color: focused ? T.electric : color,
+                    fontSize: focused ? 24 : 22,
+                  },
+                ]}
+              >
+                {cfg.icon}
+              </Text>
+              <Text style={[styles.tabLabel, { color: focused ? T.electric : T.inkFaint }]}>
+                {cfg.label}
+              </Text>
+            </View>
           ),
         };
       }}
@@ -175,44 +181,40 @@ const styles = StyleSheet.create({
     color: T.inkMuted,
     textAlign: "center",
   },
-  tabIconWrap: {
-    width: 44,
-    height: 32,
+  tabPill: {
+    minWidth: 64,
+    minHeight: 54,
+    paddingHorizontal: 12,
+    paddingVertical: 8,
     borderRadius: 16,
     alignItems: "center",
     justifyContent: "center",
+    backgroundColor: "transparent",
   },
-  tabIconWrapActive: {
+  tabPillActive: {
     backgroundColor: T.electricSoft,
+    shadowColor: T.electric,
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 2,
   },
   tabIcon: {
-    fontSize: 16,
+    fontSize: 22,
   },
   tabLabel: {
     fontSize: 10,
-    fontWeight: "600",
-  },
-  reportFab: {
-    width: 44,
-    height: 44,
-    borderRadius: 14,
-    backgroundColor: T.electric,
-    alignItems: "center",
-    justifyContent: "center",
-    marginTop: -20,
-    shadowColor: T.electric,
-    shadowOffset: { width: 0, height: 6 },
-    shadowOpacity: 0.4,
-    shadowRadius: 12,
-    elevation: 10,
-  },
-  reportFabIcon: {
-    fontSize: 22,
-    color: T.white,
     fontWeight: "700",
-    lineHeight: 22,
+    marginTop: 3,
   },
 });
+
+
+
+
+
+
+
 
 
 

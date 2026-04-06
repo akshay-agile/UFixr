@@ -2,7 +2,7 @@ node_modules/
 .venv/
 __pycache__/
 *.pyc
-backend/utilitywatch.db
+backend/ufixr.db
 backend/app/uploads/*
 .env
 .env.*

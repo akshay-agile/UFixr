@@ -1,5 +1,6 @@
 import React from "react";
 import { StyleSheet, Text, TextInput, View } from "react-native";
+import { T } from "../theme";
 
 type Props = {
   label: string;
@@ -8,6 +9,8 @@ type Props = {
   placeholder?: string;
   secureTextEntry?: boolean;
   multiline?: boolean;
+  onFocus?: () => void;
+  onBlur?: () => void;
 };
 
 export default function FormInput(props: Props) {
@@ -19,8 +22,11 @@ export default function FormInput(props: Props) {
         value={props.value}
         onChangeText={props.onChangeText}
         placeholder={props.placeholder}
+        placeholderTextColor="#cbd5e1"
         secureTextEntry={props.secureTextEntry}
         multiline={props.multiline}
+        onFocus={props.onFocus}
+        onBlur={props.onBlur}
       />
     </View>
   );
@@ -31,21 +37,26 @@ const styles = StyleSheet.create({
     marginBottom: 14,
   },
   label: {
-    fontSize: 14,
-    fontWeight: "700",
-    marginBottom: 6,
-    color: "#1b3c53",
+    fontSize: 12,
+    fontWeight: "600",
+    marginBottom: 8,
+    color: T.text,
+    letterSpacing: 0.2,
   },
   input: {
     borderWidth: 1,
-    borderColor: "#d6c7ae",
-    borderRadius: 12,
+    borderColor: T.border,
+    borderRadius: 10,
     paddingHorizontal: 14,
     paddingVertical: 12,
-    backgroundColor: "#fffdf8",
+    backgroundColor: T.background,
+    color: T.text,
+    fontSize: 15,
+    fontWeight: "500",
   },
   multiline: {
     minHeight: 100,
     textAlignVertical: "top",
+    paddingTop: 12,
   },
 });

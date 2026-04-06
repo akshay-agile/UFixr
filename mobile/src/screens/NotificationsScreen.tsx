@@ -1,5 +1,5 @@
-import React, { useEffect, useMemo, useState } from "react";
-import { Alert, StyleSheet, Text, View } from "react-native";
+import React, { useCallback, useEffect, useMemo, useState } from "react";
+import { Alert, Pressable, StyleSheet, Text, View } from "react-native";
 import Screen from "../components/Screen";
 import { apiRequest } from "../api/client";
 import { useAuth } from "../context/AuthContext";
@@ -15,18 +15,23 @@ type NotificationItem = {
 export default function NotificationsScreen() {
   const { token } = useAuth();
   const [items, setItems] = useState<NotificationItem[]>([]);
+  const [refreshing, setRefreshing] = useState(false);
+
+  const load = useCallback(async () => {
+    try {
+      setRefreshing(true);
+      const response = await apiRequest<{ items: NotificationItem[] }>("/notifications", { token });
+      setItems(response.items);
+    } catch (error) {
+      Alert.alert("Load failed", error instanceof Error ? error.message : "Unknown error");
+    } finally {
+      setRefreshing(false);
+    }
+  }, [token]);
 
   useEffect(() => {
-    const load = async () => {
-      try {
-        const response = await apiRequest<{ items: NotificationItem[] }>("/notifications", { token });
-        setItems(response.items);
-      } catch (error) {
-        Alert.alert("Load failed", error instanceof Error ? error.message : "Unknown error");
-      }
-    };
     load();
-  }, []);
+  }, [load]);
 
   const todayItems = useMemo(() => items.slice(0, 3), [items]);
   const olderItems = useMemo(() => items.slice(3), [items]);
@@ -51,8 +56,15 @@ export default function NotificationsScreen() {
 
   return (
     <Screen>
-      <Text style={styles.title}>Alerts</Text>
-      <Text style={styles.subtitle}>{todayItems.length} unread notifications</Text>
+      <View style={styles.header}>
+        <View style={{ flex: 1 }}>
+          <Text style={styles.title}>Alerts</Text>
+          <Text style={styles.subtitle}>{todayItems.length} unread notifications</Text>
+        </View>
+        <Pressable style={styles.refreshBtn} onPress={load} disabled={refreshing}>
+          <Text style={styles.refreshText}>{refreshing ? "..." : "RF"}</Text>
+        </Pressable>
+      </View>
 
       <Text style={styles.groupLabel}>Today</Text>
       {todayItems.map((item, index) => (
@@ -68,6 +80,14 @@ export default function NotificationsScreen() {
 }
 
 const styles = StyleSheet.create({
+  header: {
+    paddingTop: 12,
+    paddingBottom: 16,
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    gap: 12,
+  },
   title: {
     fontSize: 26,
     fontWeight: "800",
@@ -82,6 +102,8 @@ const styles = StyleSheet.create({
     fontWeight: "300",
     marginBottom: 16,
   },
+  refreshBtn: { width: 40, height: 36, borderRadius: 11, backgroundColor: T.white, borderWidth: 1, borderColor: T.line, alignItems: "center", justifyContent: "center" },
+  refreshText: { fontSize: 12, fontWeight: "700", color: T.ink },
   groupLabel: {
     fontSize: 11,
     fontWeight: "700",
@@ -132,5 +154,8 @@ const styles = StyleSheet.create({
     marginTop: 4,
   },
 });
+
+
+
 
 

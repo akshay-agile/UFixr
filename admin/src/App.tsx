@@ -1,290 +1,620 @@
-import { useEffect, useMemo, useState } from "react";
-import { Circle, MapContainer, Popup, TileLayer } from "react-leaflet";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import L from "leaflet";
+import { Circle, CircleMarker, MapContainer, Popup, TileLayer, useMap } from "react-leaflet";
+import { motion } from "framer-motion";
 import "leaflet/dist/leaflet.css";
 
-type Report = {
+const API_BASE_URL = "http://127.0.0.1:8000";
+const FILTERS = ["All clusters", "Electricity", "Water", "Critical only"];
+const STATUS_FILTERS = ["All statuses", "Pending", "In Progress", "Resolved"];
+const SORT_OPTIONS = ["Urgency", "Impact", "Newest", "Type"];
+const STAT_CARDS = [
+  { label: "Active outages", note: "Clusters awaiting action", code: "AO", iconBg: "bg-white/20 text-white", accent: "bg-gradient-to-r from-[#fb923c] to-[#f97316]" },
+  { label: "People impacted", note: "Estimated residents", code: "PI", iconBg: "bg-white/20 text-white", accent: "bg-gradient-to-r from-[#38bdf8] to-[#0ea5e9]" },
+  { label: "Critical watch", note: "Priority ≥ 70", code: "CW", iconBg: "bg-white/20 text-white", accent: "bg-gradient-to-r from-[#f472b6] to-[#ec4899]" },
+  { label: "Top severity", note: "Highest priority", code: "TS", iconBg: "bg-white/20 text-white", accent: "bg-gradient-to-r from-[#34d399] to-[#059669]" },
+];
+const STATUS_STYLES: Record<string, { label: string; bg: string; color: string }> = {
+  pending: { label: "Pending", bg: "bg-[#fff4e6]", color: "text-[#9c4a03]" },
+  in_progress: { label: "In progress", bg: "bg-[#e8f0ff]", color: "text-[#143172]" },
+  resolved: { label: "Resolved", bg: "bg-[#e6f5ee]", color: "text-[#0d5b3e]" },
+};
+const QUEUE_PAGE_SIZE = 6;
+const MAP_CENTER: [number, number] = [12.9716, 77.5946];
+
+type ClusterStatus = "pending" | "in_progress" | "resolved" | string;
+type UtilityType = "electricity" | "water" | string;
+
+type Technician = {
+  id: number;
+  name: string;
+  rating: number;
+  specialization: string;
+  zone: string;
+  eta_minutes?: number;
+  assignment_note?: string;
+};
+
+type TechnicianOption = Technician & { preferred_count?: number };
+
+type ClusterReport = {
   id: number;
   title: string;
-  status: string;
   severity: number;
-  photo_url?: string;
+  status: ClusterStatus;
+  photo_url?: string | null;
+  photo_urls?: string[];
+};
+
+type InsightEntry = {
+  name: string;
+  value: number;
+  color: string;
 };
 
 type Cluster = {
   id: number;
-  utility_type: "electricity" | "water";
-  status: string;
+  utility_type: UtilityType;
+  status: ClusterStatus;
+  priority_score: number;
+  estimated_people: number;
+  report_count: number;
   center_latitude: number;
   center_longitude: number;
-  report_count: number;
-  estimated_people: number;
-  priority_score: number;
-  reports: Report[];
+  eta_minutes?: number;
+  technician?: Technician;
+  technician_options?: TechnicianOption[];
+  reports?: ClusterReport[];
+  priority_reasons?: string[];
+  inline_insights?: InsightEntry[];
+  last_update_hours?: number;
+  opened_hours?: number;
+  heat_radius?: number;
 };
 
-const API_BASE_URL = "http://127.0.0.1:8000";
-const BENGALURU_CENTER: [number, number] = [12.9716, 77.5946];
-const BRAND_LOGO_URI = `data:image/svg+xml;utf8,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20128%20128%22%3E%3Cdefs%3E%3ClinearGradient%20id%3D%22wrenchGrad%22%20x1%3D%220%22%20y1%3D%221%22%20x2%3D%221%22%20y2%3D%220%22%3E%3Cstop%20offset%3D%220%22%20stop-color%3D%22%230b1f68%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%231c89e8%22%2F%3E%3C%2FlinearGradient%3E%3ClinearGradient%20id%3D%22dropGrad%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%221%22%20y2%3D%221%22%3E%3Cstop%20offset%3D%220%22%20stop-color%3D%22%2320c9f3%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%230b57c6%22%2F%3E%3C%2FlinearGradient%3E%3ClinearGradient%20id%3D%22boltGrad%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%221%22%20y2%3D%221%22%3E%3Cstop%20offset%3D%220%22%20stop-color%3D%22%23ff8a00%22%2F%3E%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23ffd400%22%2F%3E%3C%2FlinearGradient%3E%3C%2Fdefs%3E%3Cpath%20d%3D%22M39%2084c-6-6-6-16%200-22l28-28c-7-11-6-26%204-36%2011-11%2028-12%2040-4l-20%2024%204%2012h13l15-18c6%2012%205%2028-5%2038-10%2010-25%2011-36%205L54%2093c-6%206-16%206-22%200z%22%20fill%3D%22url(%23wrenchGrad)%22%2F%3E%3Ccircle%20cx%3D%2238%22%20cy%3D%2282%22%20r%3D%227%22%20fill%3D%22%230a276d%22%2F%3E%3Cpath%20d%3D%22M95%2027c12%2015%2025%2034%2025%2050%200%2018-14%2032-32%2032-11%200-21-5-27-13l18-23-20%201%2028-47c3-4%206-4%208%200z%22%20fill%3D%22url(%23dropGrad)%22%2F%3E%3Cpath%20d%3D%22M73%2044%2054%2073h18l-7%2029%2030-39H79l17-29z%22%20fill%3D%22url(%23boltGrad)%22%20stroke%3D%22%23ff6a00%22%20stroke-width%3D%222%22%20stroke-linejoin%3D%22round%22%2F%3E%3C%2Fsvg%3E`;
-
-const STATUS_STYLES: Record<string, { bg: string; color: string; label: string }> = {
-  pending: { bg: "#ffeaea", color: "#8a0e0e", label: "Pending" },
-  acknowledged: { bg: "#fff8e6", color: "#8a5c00", label: "Acknowledged" },
-  in_progress: { bg: "#e8f0ff", color: "#003f96", label: "In Progress" },
-  resolved: { bg: "#e6f5ee", color: "#065c38", label: "Resolved" },
+type SeverityMeta = {
+  label: string;
+  pill: string;
+  bar: string;
+  stroke: string;
+  fill: string;
 };
 
-const STAT_CARDS = [
-  { icon: "bolt", label: "Active Clusters", accent: "#ff4d1c", iconBg: "#fff0ec", note: "Incidents needing response" },
-  { icon: "people", label: "People Impacted", accent: "#0058cc", iconBg: "#e8f0ff", note: "Estimated residents affected" },
-  { icon: "alert", label: "Critical Queue", accent: "#cc1a1a", iconBg: "#ffeaea", note: "Scoring 70%+ priority" },
-  { icon: "chart", label: "Top Priority", accent: "#0a7a50", iconBg: "#e6f5ee", note: "Highest urgency on board" },
-] as const;
-
-const priorityColor = (priority: number, type: Cluster["utility_type"]) => {
-  if (priority >= 75) return "#cc1a1a";
-  if (priority >= 50) return "#e8960a";
-  return type === "water" ? "#0058cc" : "#ff4d1c";
-};
-
-const ringOffset = (priority: number) => {
-  const circumference = 2 * Math.PI * 22;
-  return circumference - (priority / 100) * circumference;
-};
-
-const utilityLabel = (type: Cluster["utility_type"]) => (type === "water" ? "Water" : "Electricity");
-const utilityIcon = (type: Cluster["utility_type"]) => (type === "water" ? "??" : "?");
-
-const clusterContext = (cluster: Cluster) => {
-  if (cluster.reports[0]?.title) {
-    return cluster.reports[0].title;
+const severityMeta = (score: number): SeverityMeta => {
+  if (score >= 85) {
+    return {
+      label: "Critical",
+      pill: "bg-[#ffe4e4] text-[#b42318]",
+      bar: "bg-[#dc2626]",
+      stroke: "#b42318",
+      fill: "#fca5a5",
+    };
   }
-  return `${utilityLabel(cluster.utility_type)} issue cluster`;
+  if (score >= 60) {
+    return {
+      label: "High",
+      pill: "bg-[#fff2d8] text-[#b45309]",
+      bar: "bg-[#f97316]",
+      stroke: "#d97706",
+      fill: "#fed7aa",
+    };
+  }
+  if (score >= 40) {
+    return {
+      label: "Escalating",
+      pill: "bg-[#f4f1ff] text-[#4c1d95]",
+      bar: "bg-[#7c3aed]",
+      stroke: "#6d28d9",
+      fill: "#ddd6fe",
+    };
+  }
+  return {
+    label: "Stable",
+    pill: "bg-[#e7f8f1] text-[#0f5132]",
+    bar: "bg-[#10b981]",
+    stroke: "#0f766e",
+    fill: "#a7f3d0",
+  };
 };
 
-function IconBadge({ kind }: { kind: (typeof STAT_CARDS)[number]["icon"] }) {
-  const styles: Record<(typeof STAT_CARDS)[number]["icon"], { icon: string; color: string; size?: number }> = {
-    bolt: { icon: "?", color: "#ff4d1c", size: 18 },
-    people: { icon: "??", color: "#0058cc", size: 16 },
-    alert: { icon: "??", color: "#cc1a1a", size: 16 },
-    chart: { icon: "??", color: "#0a7a50", size: 16 },
-  };
-  const entry = styles[kind];
-  return <span style={{ color: entry.color, fontSize: entry.size ?? 16, lineHeight: 1 }}>{entry.icon}</span>;
-}
+const utilityLabel = (utility: UtilityType) => {
+  if (utility === "electricity") return "Electricity";
+  if (utility === "water") return "Water";
+  return utility.charAt(0).toUpperCase() + utility.slice(1);
+};
 
-function UtilityPill({ type }: { type: Cluster["utility_type"] }) {
-  const isWater = type === "water";
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 5,
-        padding: "4px 10px",
-        borderRadius: 999,
-        fontSize: 11,
-        fontWeight: 700,
-        background: isWater ? "#e8f0ff" : "#fff0ec",
-        color: isWater ? "#003f96" : "#b83600",
-        letterSpacing: "0.02em",
-      }}
-    >
-      <span style={{ fontSize: 12, lineHeight: 1 }}>{utilityIcon(type)}</span>
-      {utilityLabel(type)}
-    </span>
-  );
-}
+const utilityColor = (utility: UtilityType) => {
+  if (utility === "electricity") return "#f97316";
+  if (utility === "water") return "#0ea5e9";
+  return "#6b7280";
+};
 
-function PriorityRing({ value, type }: { value: number; type: Cluster["utility_type"] }) {
-  const color = priorityColor(value, type);
-  const circumference = 2 * Math.PI * 22;
+function PriorityGauge({ value }: { value: number }) {
+  const radius = 34;
+  const stroke = 6;
+  const circumference = 2 * Math.PI * radius;
+  const offset = circumference * (1 - Math.min(100, Math.max(0, value)) / 100);
 
   return (
-    <div style={{ width: 54, height: 54, position: "relative", flexShrink: 0 }}>
-      <svg width="54" height="54" style={{ transform: "rotate(-90deg)" }}>
-        <circle cx="27" cy="27" r="22" fill="none" stroke="#ede5d4" strokeWidth="4" />
+    <div className="relative flex h-20 w-20 items-center justify-center">
+      <svg width={radius * 2 + stroke} height={radius * 2 + stroke} className="-rotate-90">
         <circle
-          cx="27"
-          cy="27"
-          r="22"
-          fill="none"
-          stroke={color}
-          strokeWidth="4"
-          strokeLinecap="round"
+          cx={radius + stroke / 2}
+          cy={radius + stroke / 2}
+          r={radius}
+          stroke="#f1e8da"
+          strokeWidth={stroke}
+          fill="transparent"
+        />
+        <circle
+          cx={radius + stroke / 2}
+          cy={radius + stroke / 2}
+          r={radius}
+          stroke="#dc2626"
+          strokeWidth={stroke}
           strokeDasharray={circumference}
-          strokeDashoffset={ringOffset(value)}
-          style={{ transition: "stroke-dashoffset 0.6s ease" }}
+          strokeDashoffset={offset}
+          strokeLinecap="round"
+          fill="transparent"
         />
       </svg>
-      <div
-        style={{
-          position: "absolute",
-          inset: 0,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          fontFamily: "Sora, sans-serif",
-          fontSize: 12,
-          fontWeight: 800,
-          color,
-          letterSpacing: "-0.04em",
-        }}
-      >
-        {value}%
+      <div className="absolute text-center">
+        <p className="text-xs font-semibold text-smoke">Score</p>
+        <p className="text-lg font-black text-dusk">{Math.round(value)}%</p>
       </div>
     </div>
   );
 }
 
-function ClusterCard({ cluster, onStatusChange }: { cluster: Cluster; onStatusChange: (id: number, status: string) => void }) {
-  const [expanded, setExpanded] = useState(cluster.id === 3);
-  const st = STATUS_STYLES[cluster.status] ?? STATUS_STYLES.pending;
-  const summary = clusterContext(cluster);
+type FilterGroupProps = {
+  label: string;
+  options: string[];
+  activeValue: string;
+  onChange: (value: string) => void;
+};
 
+function FilterGroup({ label, options, activeValue, onChange }: FilterGroupProps) {
   return (
-    <div
-      style={{
-        border: "1px solid",
-        borderColor: expanded ? "rgba(26,20,16,0.14)" : "rgba(26,20,16,0.08)",
-        borderRadius: 18,
-        background: expanded ? "#fff" : "#faf7f2",
-        overflow: "hidden",
-        transition: "box-shadow 0.2s, transform 0.2s",
-      }}
-      onMouseEnter={(event) => {
-        event.currentTarget.style.boxShadow = "0 8px 24px rgba(26,20,16,0.07)";
-        event.currentTarget.style.transform = "translateY(-1px)";
-      }}
-      onMouseLeave={(event) => {
-        event.currentTarget.style.boxShadow = "none";
-        event.currentTarget.style.transform = "translateY(0)";
-      }}
-    >
-      <div
-        style={{ padding: "14px 14px 10px", display: "grid", gridTemplateColumns: "1fr auto", gap: 12, alignItems: "start", cursor: "pointer" }}
-        onClick={() => setExpanded((value) => !value)}
-      >
-        <div>
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
-            <UtilityPill type={cluster.utility_type} />
-            <span style={{ padding: "4px 10px", borderRadius: 999, fontSize: 11, fontWeight: 700, letterSpacing: "0.02em", background: st.bg, color: st.color }}>
-              {st.label}
-            </span>
-          </div>
-          <div style={{ fontFamily: "Sora, sans-serif", fontSize: 15, fontWeight: 700, letterSpacing: "-0.03em", marginBottom: 4 }}>
-            Cluster #{cluster.id} with {cluster.report_count} {cluster.report_count === 1 ? "report" : "reports"}
-          </div>
-          <div style={{ fontSize: 12, color: "#7a6e66", fontWeight: 400 }}>
-            Estimated impact: {cluster.estimated_people.toLocaleString()} people / {summary}
-          </div>
-        </div>
-        <PriorityRing value={Math.round(cluster.priority_score)} type={cluster.utility_type} />
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", borderTop: "1px solid rgba(26,20,16,0.08)" }}>
-        {[
-          { label: "Reports", value: cluster.report_count },
-          { label: "Affected", value: cluster.estimated_people.toLocaleString() },
-          { label: "Utility", value: cluster.utility_type === "water" ? "Water" : "Electricity" },
-        ].map((metric, index) => (
-          <div key={metric.label} style={{ padding: "10px 14px", borderRight: index < 2 ? "1px solid rgba(26,20,16,0.08)" : "none" }}>
-            <div style={{ fontSize: 10, fontWeight: 600, color: "#b8afa5", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 4 }}>{metric.label}</div>
-            <div style={{ fontSize: 15, fontWeight: 700, fontFamily: "Sora, sans-serif", letterSpacing: "-0.02em" }}>{metric.value}</div>
-          </div>
-        ))}
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(3,1fr)", gap: 8, padding: "10px 14px 12px" }}>
-        {[
-          { label: "Acknowledge", bg: "#fff8e6", color: "#7a4e00", status: "acknowledged" },
-          { label: "In Progress", bg: "#e8f0ff", color: "#003f96", status: "in_progress" },
-          { label: "Resolve", bg: "#e6f5ee", color: "#065c38", status: "resolved" },
-        ].map((button) => (
+    <div className="rounded-3xl border border-[#eadfd1] bg-white/80 px-4 py-3">
+      <p className="text-[11px] font-semibold uppercase tracking-[0.3em] text-smoke">{label}</p>
+      <div className="mt-3 flex flex-wrap gap-2">
+        {options.map((option) => (
           <button
-            key={button.status}
-            onClick={(event) => {
-              event.stopPropagation();
-              onStatusChange(cluster.id, button.status);
-            }}
-            style={{
-              border: "none",
-              borderRadius: 8,
-              padding: "9px 8px",
-              fontSize: 12,
-              fontWeight: 700,
-              cursor: "pointer",
-              fontFamily: "Manrope, sans-serif",
-              letterSpacing: "0.01em",
-              background: button.bg,
-              color: button.color,
-            }}
+            key={option}
+            type="button"
+            onClick={() => onChange(option)}
+            className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+              activeValue === option ? "border-dusk bg-dusk text-white" : "border-[#eadfd1] text-smoke hover:bg-sand"
+            }`}
           >
-            {button.label}
+            {option}
           </button>
         ))}
       </div>
-
-      {expanded && cluster.reports.length > 0 ? (
-        <div style={{ padding: "0 14px 14px", display: "flex", flexDirection: "column", gap: 8 }}>
-          <div style={{ fontSize: 11, fontWeight: 700, color: "#b8afa5", textTransform: "uppercase", letterSpacing: "0.08em", marginBottom: 2 }}>Incoming reports</div>
-          {cluster.reports.map((report) => (
-            <div key={report.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 12px", borderRadius: 8, background: "#f5f0e8", border: "1px solid rgba(26,20,16,0.08)" }}>
-              <div
-                style={{
-                  width: 4,
-                  alignSelf: "stretch",
-                  minHeight: 36,
-                  borderRadius: 2,
-                  background: report.severity >= 5 ? "#cc1a1a" : report.severity >= 3 ? "#e8960a" : cluster.utility_type === "water" ? "#0058cc" : "#ff4d1c",
-                  flexShrink: 0,
-                }}
-              />
-              <div style={{ flex: 1 }}>
-                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 2 }}>{report.title}</div>
-                <div style={{ fontSize: 11, color: "#7a6e66", fontWeight: 400 }}>
-                  Severity {report.severity} / {(STATUS_STYLES[report.status]?.label ?? report.status).replace("_", " ")}
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : null}
     </div>
   );
 }
 
-function LiveMap({ clusters }: { clusters: Cluster[] }) {
+type QueueCardProps = {
+  cluster: Cluster;
+  isSelected: boolean;
+  onSelect: (cluster: Cluster) => void;
+};
+
+function resolveReportPhotos(report: ClusterReport) {
+  if (report.photo_urls?.length) {
+    return report.photo_urls;
+  }
+  if (report.photo_url) {
+    return [report.photo_url];
+  }
+  return [];
+}
+
+function QueueCard({ cluster, isSelected, onSelect }: QueueCardProps) {
+  const severity = severityMeta(cluster.priority_score);
+  const statusMeta = STATUS_STYLES[cluster.status] ?? { label: cluster.status, bg: "bg-sand", color: "text-dusk" };
+  const priority = Math.round(cluster.priority_score);
+  const etaMinutes = cluster.eta_minutes ?? cluster.technician?.eta_minutes ?? 45;
+
   return (
-    <MapContainer center={BENGALURU_CENTER} zoom={11} scrollWheelZoom style={{ width: "100%", height: "100%" }}>
-      <TileLayer
-        attribution='&copy; <a href="https://www.openstreetmap.org/">OpenStreetMap</a>'
-        url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-      />
-      {clusters.map((cluster) => {
-        const color = cluster.utility_type === "water" ? "#0058cc" : "#ff4d1c";
-        const radius = Math.max(180, cluster.report_count * 70);
-        return (
-          <Circle
-            key={cluster.id}
-            center={[cluster.center_latitude, cluster.center_longitude]}
-            radius={radius}
-            pathOptions={{
-              color,
-              fillColor: color,
-              fillOpacity: cluster.status === "resolved" ? 0.08 : 0.2,
-              weight: 2,
-            }}
-          >
-            <Popup>
-              <div style={{ fontFamily: "Manrope, sans-serif", minWidth: 180 }}>
-                <strong>Cluster #{cluster.id}</strong>
-                <div>{utilityIcon(cluster.utility_type)} {utilityLabel(cluster.utility_type)}</div>
-                <div>Status: {(STATUS_STYLES[cluster.status]?.label ?? cluster.status).replace("_", " ")}</div>
-                <div>Priority: {Math.round(cluster.priority_score)}%</div>
-                <div>Affected: {cluster.estimated_people.toLocaleString()}</div>
+    <div
+      role="button"
+      tabIndex={0}
+      onClick={() => onSelect(cluster)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          onSelect(cluster);
+        }
+      }}
+      className={`w-full rounded-[26px] border-2 px-5 py-4 text-left transition ${
+        isSelected ? "border-dusk bg-white shadow-xl" : "border-[#f2e7da] bg-white hover:border-dusk/60"
+      }`}
+    >
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <p className="text-[11px] font-semibold uppercase tracking-[0.25em] text-smoke">Cluster #{cluster.id}</p>
+          <p className="font-sora text-xl font-black text-dusk">{utilityLabel(cluster.utility_type)} · {cluster.report_count} report{cluster.report_count === 1 ? "" : "s"}</p>
+        </div>
+        <div className="text-right">
+          <p className="text-[11px] font-semibold uppercase tracking-[0.25em] text-smoke">Priority</p>
+          <p className="font-sora text-3xl font-black text-dusk">{priority}%</p>
+        </div>
+      </div>
+      <div className="mt-3 flex flex-wrap items-center gap-2 text-xs font-semibold">
+        <span className={`rounded-full px-3 py-1 ${statusMeta.bg} ${statusMeta.color}`}>{statusMeta.label}</span>
+        <span className={`rounded-full px-3 py-1 ${severity.pill}`}>{severity.label}</span>
+        <span className="rounded-full bg-shell px-3 py-1 text-[#5a4a3f]">{cluster.estimated_people.toLocaleString()} impacted</span>
+        {cluster.technician ? (
+          <span className="rounded-full bg-sand px-3 py-1 text-smoke">{cluster.technician.name}</span>
+        ) : null}
+      </div>
+      <div className="mt-4 grid grid-cols-3 gap-3 text-center text-xs font-semibold text-smoke">
+        <div>
+          <p className="uppercase tracking-[0.3em] text-[10px]">ETA</p>
+          <p className="mt-1 font-sora text-lg text-dusk">{etaMinutes}m</p>
+        </div>
+        <div>
+          <p className="uppercase tracking-[0.3em] text-[10px]">Status</p>
+          <p className="mt-1 font-sora text-lg text-dusk">{statusMeta.label}</p>
+        </div>
+        <div>
+          <p className="uppercase tracking-[0.3em] text-[10px]">Reports</p>
+          <p className="mt-1 font-sora text-lg text-dusk">{cluster.report_count}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+type ClusterFocusPanelProps = {
+  cluster: Cluster | null;
+  onAssign: (cluster: Cluster, technicianId: number) => Promise<void> | void;
+  onStatusChange: (clusterId: number, status: ClusterStatus) => Promise<void> | void;
+  onZoomToLocation: (latitude: number, longitude: number, options?: { scroll?: boolean }) => void;
+};
+
+function ClusterFocusPanel({ cluster, onAssign, onStatusChange, onZoomToLocation }: ClusterFocusPanelProps) {
+  const [showAssignMenu, setShowAssignMenu] = useState(false);
+  const [assigningId, setAssigningId] = useState<number | null>(null);
+  const [statusUpdating, setStatusUpdating] = useState<ClusterStatus | "">("");
+
+  if (!cluster) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center rounded-3xl border border-dashed border-[#eadfd1] bg-white/30 p-8 text-center text-sm text-smoke">
+        <p className="font-sora text-lg font-bold text-dusk">Select a cluster to open the focus panel</p>
+        <p className="mt-2 max-w-sm text-sm">Use the queue or map to pick a cluster. Insights, assignment options, and live signals show here.</p>
+      </div>
+    );
+  }
+
+  const severity = severityMeta(cluster.priority_score);
+  const statusMeta = STATUS_STYLES[cluster.status] ?? { label: cluster.status, bg: "bg-sand", color: "text-dusk" };
+  const priorityTags = cluster.priority_reasons ?? [];
+  const inlineInsights = cluster.inline_insights ?? [];
+  const hoursOpen = cluster.opened_hours ?? 0;
+  const hoursSinceUpdate = cluster.last_update_hours ?? 0;
+  const etaMinutes = cluster.eta_minutes ?? cluster.technician?.eta_minutes ?? 45;
+  const isInProgress = cluster.status === "in_progress";
+  const isResolved = cluster.status === "resolved";
+  const priorityScore = Math.round(cluster.priority_score);
+  const resolutionFill = Math.min(100, Math.max(8, (1 - etaMinutes / 240) * 100));
+
+  const assignTech = async (technicianId: number) => {
+    if (!cluster) return;
+    setAssigningId(technicianId);
+    try {
+      await Promise.resolve(onAssign(cluster, technicianId));
+    } finally {
+      setAssigningId(null);
+      setShowAssignMenu(false);
+    }
+  };
+
+  const handleQuickStatus = async (targetStatus: ClusterStatus) => {
+    if (!cluster) return;
+    setStatusUpdating(targetStatus);
+    try {
+      await Promise.resolve(onStatusChange(cluster.id, targetStatus));
+    } finally {
+      setStatusUpdating("");
+    }
+  };
+
+  const insightRows: InsightEntry[] = inlineInsights.length
+    ? inlineInsights
+    : [
+        { name: "Severity", value: Math.round(cluster.priority_score), color: "#dc2626" },
+        { name: "Density", value: Math.min(100, cluster.report_count * 8), color: "#f97316" },
+        { name: "Recency", value: Math.max(20, 100 - hoursSinceUpdate * 10), color: "#14b8a6" },
+      ];
+
+  return (
+    <div className="flex h-full flex-col gap-4">
+      <section className="rounded-[28px] border border-[#f0e6d8] bg-white/95 p-5 shadow-sm">
+        <div className="flex flex-wrap items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.3em] text-smoke">
+          <span className={`rounded-full px-3 py-1 ${statusMeta.bg} ${statusMeta.color}`}>{statusMeta.label}</span>
+          <span className={`rounded-full px-3 py-1 ${severity.pill}`}>{utilityLabel(cluster.utility_type)}</span>
+          <span className="rounded-full bg-sand px-3 py-1 text-[#5a4a3f]">{cluster.estimated_people.toLocaleString()} residents impacted</span>
+          <span className="rounded-full bg-[#f3f0ff] px-3 py-1 text-[#4b2fc3]">{cluster.report_count} reports</span>
+        </div>
+        <div className="mt-4 flex flex-wrap items-center justify-between gap-4">
+          <div className="min-w-[200px]">
+            <p className="text-xs font-semibold uppercase tracking-[0.3em] text-smoke">Why highlighted</p>
+            <p className="mt-2 font-sora text-3xl font-black text-dusk">Priority {priorityScore}%</p>
+            <p className="text-sm text-smoke">Open for {hoursOpen.toFixed(1)}h · last update {hoursSinceUpdate.toFixed(1)}h ago</p>
+          </div>
+          <div className="flex flex-wrap items-center gap-4">
+            <PriorityGauge value={priorityScore} />
+            <button
+              type="button"
+              onClick={() => onZoomToLocation(cluster.center_latitude, cluster.center_longitude, { scroll: true })}
+              className="rounded-full border border-[#eadfd1] px-4 py-2 text-sm font-semibold text-dusk transition hover:bg-sand"
+            >
+              📍 Focus on map
+            </button>
+          </div>
+        </div>
+      </section>
+
+      {priorityTags.length ? (
+        <section className="rounded-[26px] border border-[#f7efe4] bg-[#fffbf6] p-4">
+          <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-[#b8afa5]">Priority signals</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {priorityTags.map((reason) => (
+              <span key={reason} className="rounded-full bg-white px-3 py-1 text-[12px] font-semibold text-dusk">
+                {reason}
+              </span>
+            ))}
+          </div>
+        </section>
+      ) : null}
+
+      <section className="rounded-[28px] border border-[#f0e6d8] bg-white p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-[#b8afa5]">Predicted resolution</p>
+            <p className="font-sora text-3xl font-black text-dusk">{etaMinutes} min</p>
+          </div>
+          <span className="text-xs font-semibold text-smoke">Live ETA refreshed every 15s</span>
+        </div>
+        <div className="mt-4 h-3 rounded-full bg-[#f4ede3]">
+          <div
+            className="h-full rounded-full bg-gradient-to-r from-[#16a34a] via-[#fbbf24] to-[#ef4444]"
+            style={{ width: `${resolutionFill}%` }}
+          />
+        </div>
+        <div className="mt-6 space-y-2">
+          {insightRows.map((entry) => (
+            <div key={entry.name} className="flex items-center gap-3 text-sm">
+              <div className="flex items-center gap-2">
+                <span className="h-3 w-3 rounded-full" style={{ background: entry.color }} />
+                <span className="text-sm font-semibold text-dusk">{entry.name}</span>
               </div>
-            </Popup>
-          </Circle>
+              <div className="flex-1 rounded-full bg-[#f7f1ea]">
+                <div className="h-2 rounded-full" style={{ width: `${entry.value}%`, background: entry.color }} />
+              </div>
+              <span className="w-12 text-right text-sm font-semibold text-smoke">{entry.value}%</span>
+            </div>
+          ))}
+        </div>
+      </section>
+
+      <section className="rounded-[28px] border border-[#e4f0ff] bg-[#f7fbff] p-5">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-[#7b8ba6]">Technician assignment</p>
+            <p className="font-sora text-xl font-bold text-dusk">{cluster.technician ? cluster.technician.name : "Awaiting assignment"}</p>
+            <p className="text-xs text-smoke">
+              {cluster.technician
+                ? `${cluster.technician.specialization} · ${cluster.technician.zone} · ${cluster.technician.rating.toFixed(1)}★`
+                : "Pick a specialist to dispatch"}
+            </p>
+          </div>
+          <span
+            className={`rounded-full px-3 py-1 text-[12px] font-semibold ${
+              cluster.technician ? "bg-white text-dusk" : "bg-[#dfe8ff] text-[#1a3d8f]"
+            }`}
+          >
+            {cluster.technician ? cluster.status.replace("_", " ") : "Unassigned"}
+          </span>
+        </div>
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          <div className="relative">
+            <button
+              type="button"
+              disabled={!cluster.technician_options?.length}
+              onClick={() => setShowAssignMenu((value) => !value)}
+              className={`w-full rounded-2xl px-4 py-3 text-sm font-bold text-white transition ${
+                !cluster.technician_options?.length ? "bg-[#1f2533]/30" : "bg-[#1f2533] hover:bg-[#12182a]"
+              }`}
+            >
+              {cluster.technician ? "Reassign technician" : "Assign technician"}
+            </button>
+            {showAssignMenu && (cluster.technician_options?.length ?? 0) ? (
+              <div className="absolute left-0 top-full z-20 mt-2 w-full rounded-2xl border border-[#eadfd1] bg-white p-2 shadow-2xl">
+                {(cluster.technician_options ?? []).map((tech) => (
+                  <button
+                    key={tech.id}
+                    type="button"
+                    disabled={assigningId === tech.id}
+                    onClick={() => assignTech(tech.id)}
+                    className={`flex w-full items-center justify-between rounded-xl px-3 py-2 text-left text-[13px] font-semibold transition ${
+                      assigningId === tech.id ? "bg-dusk text-white" : "hover:bg-sand"
+                    }`}
+                  >
+                    <div>
+                      <p>{tech.name}</p>
+                      <p className="text-[11px] font-normal text-smoke">{tech.specialization} · Pref {tech.preferred_count ?? 0}</p>
+                    </div>
+                    <span>{tech.rating.toFixed(1)}★</span>
+                  </button>
+                ))}
+              </div>
+            ) : null}
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <button
+              type="button"
+              disabled={isInProgress || statusUpdating === "in_progress"}
+              onClick={() => handleQuickStatus("in_progress")}
+              className={`rounded-2xl px-4 py-3 text-sm font-bold transition ${
+                isInProgress ? "bg-[#e8f0ff] text-[#94a8d6]" : "bg-[#e8f0ff] text-[#003f96] hover:bg-[#d6e4ff]"
+              }`}
+            >
+              {statusUpdating === "in_progress" ? "Updating..." : "Mark in progress"}
+            </button>
+            <button
+              type="button"
+              disabled={isResolved || statusUpdating === "resolved"}
+              onClick={() => handleQuickStatus("resolved")}
+              className={`rounded-2xl px-4 py-3 text-sm font-bold transition ${
+                isResolved ? "bg-[#e6f5ee] text-[#8bb7a3]" : "bg-[#e6f5ee] text-[#065c38] hover:bg-[#d3efdf]"
+              }`}
+            >
+              {statusUpdating === "resolved" ? "Updating..." : "Mark resolved"}
+            </button>
+          </div>
+        </div>
+        {cluster.technician ? (
+          <p className="mt-3 text-xs text-smoke">
+            ETA {cluster.technician.eta_minutes ?? 45} min
+            {cluster.technician.assignment_note ? ` · ${cluster.technician.assignment_note}` : ""}
+          </p>
+        ) : null}
+      </section>
+
+      <section className="flex-1 rounded-[28px] border border-[#f0e6d8] bg-white p-5">
+        <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-[#b8afa5]">Incoming reports</p>
+        <div className="mt-3 space-y-2 overflow-y-auto">
+          {(cluster.reports ?? []).slice(0, 4).map((report) => {
+            const reportPhotos = resolveReportPhotos(report);
+
+            return (
+              <div key={report.id} className="rounded-2xl border border-[#f0e6d8] bg-white px-3 py-3">
+                <div className="flex items-center gap-3">
+                  <span
+                    className="h-10 w-1 rounded-full"
+                    style={{
+                      background:
+                        report.severity >= 5
+                          ? "#cc1a1a"
+                          : report.severity >= 3
+                          ? "#f0a400"
+                          : utilityColor(cluster.utility_type),
+                    }}
+                  />
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-semibold">{report.title}</p>
+                    <p className="text-[11px] text-smoke">
+                      Severity {report.severity} · {STATUS_STYLES[report.status]?.label ?? report.status}
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => onZoomToLocation(cluster.center_latitude, cluster.center_longitude, { scroll: true })}
+                    className="rounded-full border border-[#eadfd1] px-3 py-1 text-[11px] font-semibold text-dusk transition hover:bg-sand"
+                  >
+                    Zoom
+                  </button>
+                </div>
+                {reportPhotos.length ? (
+                  <div className="mt-3">
+                    <p className="text-[10px] font-bold uppercase tracking-[0.28em] text-[#b8afa5]">Evidence</p>
+                    <div className="mt-2 grid grid-cols-2 gap-2">
+                      {reportPhotos.map((photoUrl, index) => (
+                        <a
+                          key={`${report.id}-${index}`}
+                          href={photoUrl}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="group overflow-hidden rounded-2xl border border-[#f0e6d8] bg-[#fffaf4]"
+                        >
+                          <img
+                            src={photoUrl}
+                            alt={`Report ${report.id} evidence ${index + 1}`}
+                            className="h-28 w-full object-cover transition duration-300 group-hover:scale-[1.02]"
+                            loading="lazy"
+                          />
+                        </a>
+                      ))}
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+type LiveMapProps = {
+  clusters: Cluster[];
+  selectedClusterId: number | null;
+  onSelectCluster: (cluster: Cluster) => void;
+  onMapReady: (map: L.Map) => void;
+};
+
+type MapReadyBridgeProps = {
+  onReady: (map: L.Map) => void;
+};
+
+function MapReadyBridge({ onReady }: MapReadyBridgeProps) {
+  const map = useMap();
+
+  useEffect(() => {
+    onReady(map);
+  }, [map, onReady]);
+
+  return null;
+}
+
+function LiveMap({ clusters, selectedClusterId, onSelectCluster, onMapReady }: LiveMapProps) {
+  return (
+    <MapContainer
+      center={MAP_CENTER}
+      zoom={11.5}
+      scrollWheelZoom={true}
+      style={{ height: "420px" }}
+      className="w-full"
+    >
+      <MapReadyBridge onReady={onMapReady} />
+      <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+      {clusters.map((cluster) => {
+        const severity = severityMeta(cluster.priority_score);
+        const radius = cluster.heat_radius ?? Math.max(400, cluster.estimated_people / 3);
+        const selected = cluster.id === selectedClusterId;
+
+        return (
+          <Fragment key={cluster.id}>
+            <Circle
+              center={[cluster.center_latitude, cluster.center_longitude]}
+              radius={radius}
+              pathOptions={{
+                color: severity.stroke,
+                fillColor: severity.fill,
+                fillOpacity: selected ? 0.25 : 0.12,
+                weight: selected ? 3 : 1,
+              }}
+            />
+            <CircleMarker
+              center={[cluster.center_latitude, cluster.center_longitude]}
+              radius={selected ? 8 : 6}
+              pathOptions={{ color: severity.stroke, fillColor: utilityColor(cluster.utility_type), fillOpacity: 1 }}
+              eventHandlers={{ click: () => onSelectCluster(cluster) }}
+            >
+              <Popup>
+                <div className="space-y-1 text-sm">
+                  <p className="font-semibold">{utilityLabel(cluster.utility_type)}</p>
+                  <p>Priority {Math.round(cluster.priority_score)}%</p>
+                  <p>{cluster.estimated_people.toLocaleString()} residents</p>
+                </div>
+              </Popup>
+            </CircleMarker>
+          </Fragment>
         );
       })}
     </MapContainer>
@@ -293,10 +623,16 @@ function LiveMap({ clusters }: { clusters: Cluster[] }) {
 
 export default function UFixrDashboard() {
   const [clusters, setClusters] = useState<Cluster[]>([]);
-  const [activeFilter, setActiveFilter] = useState("All clusters");
-  const [sortMode, setSortMode] = useState("Urgency");
+  const [activeFilter, setActiveFilter] = useState<string>(FILTERS[0]);
+  const [activeStatusFilter, setActiveStatusFilter] = useState<string>(STATUS_FILTERS[0]);
+  const [sortMode, setSortMode] = useState<string>(SORT_OPTIONS[0]);
   const [tick, setTick] = useState(15);
   const [error, setError] = useState("");
+  const [selectedClusterId, setSelectedClusterId] = useState<number | null>(null);
+  const [queueSearch, setQueueSearch] = useState("");
+  const [queuePage, setQueuePage] = useState(0);
+  const mapRef = useRef<L.Map | null>(null);
+  const mapPanelRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     const id = window.setInterval(() => setTick((value) => (value <= 1 ? 15 : value - 1)), 1000);
@@ -322,7 +658,91 @@ export default function UFixrDashboard() {
     return () => window.clearInterval(id);
   }, []);
 
-  const handleStatusChange = async (id: number, newStatus: string) => {
+  useEffect(() => {
+    if (selectedClusterId === null) {
+      return;
+    }
+    if (!clusters.some((cluster) => cluster.id === selectedClusterId)) {
+      setSelectedClusterId(null);
+    }
+  }, [clusters, selectedClusterId]);
+
+  useEffect(() => {
+    setQueuePage(0);
+  }, [activeFilter, activeStatusFilter, sortMode, queueSearch]);
+
+  const handleMapReady = useCallback((map: L.Map) => {
+    mapRef.current = map;
+  }, []);
+
+  const scrollToMap = useCallback(() => {
+    mapPanelRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, []);
+
+  const handleZoomToLocation = useCallback((latitude: number, longitude: number, options?: { scroll?: boolean }) => {
+    if (mapRef.current) {
+      mapRef.current.flyTo([latitude, longitude], 16, { duration: 1.5 });
+    }
+    if (options?.scroll) {
+      scrollToMap();
+    }
+  }, [scrollToMap]);
+
+  const handleSelectCluster = useCallback(
+    (cluster: Cluster) => {
+      setSelectedClusterId(cluster.id);
+      handleZoomToLocation(cluster.center_latitude, cluster.center_longitude);
+    },
+    [handleZoomToLocation]
+  );
+
+  useEffect(() => {
+    const handleKeyNav = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setSelectedClusterId(null);
+        return;
+      }
+
+      if (!clusters.length) {
+        return;
+      }
+
+      if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+        const actionable = clusters
+          .filter((cluster) => {
+            if (activeFilter === "Electricity" && cluster.utility_type !== "electricity") return false;
+            if (activeFilter === "Water" && cluster.utility_type !== "water") return false;
+            if (activeFilter === "Critical only" && cluster.priority_score < 70) return false;
+            if (activeStatusFilter === "Pending" && cluster.status !== "pending") return false;
+            if (activeStatusFilter === "In Progress" && cluster.status !== "in_progress") return false;
+            if (activeStatusFilter === "Resolved" && cluster.status !== "resolved") return false;
+            return true;
+          })
+          .sort((a, b) => {
+            if (sortMode === "Urgency") return b.priority_score - a.priority_score;
+            if (sortMode === "Impact") return b.estimated_people - a.estimated_people;
+            if (sortMode === "Newest") return b.id - a.id;
+            if (sortMode === "Type") return a.utility_type.localeCompare(b.utility_type);
+            return 0;
+          });
+
+        if (!actionable.length) {
+          return;
+        }
+
+        event.preventDefault();
+        const index = actionable.findIndex((cluster) => cluster.id === selectedClusterId);
+        const delta = event.key === "ArrowDown" ? 1 : -1;
+        const nextIndex = index === -1 ? (event.key === "ArrowDown" ? 0 : actionable.length - 1) : Math.min(actionable.length - 1, Math.max(0, index + delta));
+        handleSelectCluster(actionable[nextIndex]);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyNav);
+    return () => window.removeEventListener("keydown", handleKeyNav);
+  }, [clusters, activeFilter, activeStatusFilter, sortMode, selectedClusterId, handleSelectCluster]);
+
+  const handleStatusChange = async (id: number, newStatus: ClusterStatus) => {
     try {
       await fetch(`${API_BASE_URL}/admin/clusters/${id}/status`, {
         method: "PATCH",
@@ -336,171 +756,283 @@ export default function UFixrDashboard() {
     }
   };
 
-  const filters = ["All clusters", "Electricity", "Water", "Critical only"];
-  const sorts = ["Urgency", "Newest", "Impact", "Type"];
+  const handleAssign = async (cluster: Cluster, technicianId: number) => {
+    try {
+      const preferred = cluster.technician_options?.find((item) => item.id === technicianId)?.preferred_count ?? 0;
+      const eta = Math.max(25, 55 - preferred * 5 - Math.round(cluster.priority_score / 10));
+      await fetch(`${API_BASE_URL}/admin/clusters/${cluster.id}/assign`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ technician_id: technicianId, eta_minutes: eta, note: preferred > 0 ? `Preferred by ${preferred} reporting user(s)` : "Assigned by dispatcher" }),
+      });
+      await loadClusters();
+    } catch (err) {
+      console.error(err);
+      setError("Technician assignment failed.");
+    }
+  };
 
   const filtered = useMemo(() => {
-    const next = clusters.filter((cluster) => {
-      if (activeFilter === "Electricity") return cluster.utility_type === "electricity";
-      if (activeFilter === "Water") return cluster.utility_type === "water";
-      if (activeFilter === "Critical only") return cluster.priority_score >= 70;
-      return true;
+    const matches = clusters.filter((cluster) => {
+      const matchesUtility =
+        activeFilter === "All clusters" ||
+        (activeFilter === "Electricity" && cluster.utility_type === "electricity") ||
+        (activeFilter === "Water" && cluster.utility_type === "water") ||
+        (activeFilter === "Critical only" && cluster.priority_score >= 70);
+
+      const matchesStatus =
+        activeStatusFilter === "All statuses" ||
+        (activeStatusFilter === "Pending" && cluster.status === "pending") ||
+        (activeStatusFilter === "In Progress" && cluster.status === "in_progress") ||
+        (activeStatusFilter === "Resolved" && cluster.status === "resolved");
+
+      return matchesUtility && matchesStatus;
     });
 
-    return next.sort((a, b) => {
+    return matches.sort((a, b) => {
       if (sortMode === "Urgency") return b.priority_score - a.priority_score;
       if (sortMode === "Impact") return b.estimated_people - a.estimated_people;
       if (sortMode === "Newest") return b.id - a.id;
       if (sortMode === "Type") return a.utility_type.localeCompare(b.utility_type);
       return 0;
     });
-  }, [clusters, activeFilter, sortMode]);
+  }, [clusters, activeFilter, activeStatusFilter, sortMode]);
 
+  const selectedCluster = useMemo(() => clusters.find((cluster) => cluster.id === selectedClusterId) ?? null, [clusters, selectedClusterId]);
+  const searchableQueue = useMemo(() => {
+    const term = queueSearch.trim().toLowerCase();
+    if (!term) {
+      return filtered;
+    }
+    return filtered.filter((cluster) => {
+      if (`${cluster.id}`.includes(term)) return true;
+      if (utilityLabel(cluster.utility_type).toLowerCase().includes(term)) return true;
+      if (cluster.status.toLowerCase().includes(term)) return true;
+      if (cluster.technician && cluster.technician.name.toLowerCase().includes(term)) return true;
+      if (cluster.technician && cluster.technician.zone.toLowerCase().includes(term)) return true;
+      return false;
+    });
+  }, [filtered, queueSearch]);
+  const totalQueuePages = Math.max(1, Math.ceil(searchableQueue.length / QUEUE_PAGE_SIZE));
+  const safePage = Math.min(queuePage, totalQueuePages - 1);
+  const pageStart = safePage * QUEUE_PAGE_SIZE;
+  const visibleQueue = searchableQueue.slice(pageStart, pageStart + QUEUE_PAGE_SIZE);
+  const showingStart = searchableQueue.length ? pageStart + 1 : 0;
+  const showingEnd = Math.min(searchableQueue.length, pageStart + visibleQueue.length);
+  const handlePageNav = (direction: "prev" | "next") => {
+    setQueuePage((prev) => {
+      if (direction === "prev") {
+        return Math.max(0, prev - 1);
+      }
+      return Math.min(Math.max(0, totalQueuePages - 1), prev + 1);
+    });
+  };
+
+  const activeCount = clusters.filter((cluster) => cluster.status !== "resolved").length;
   const totalAffected = clusters.reduce((sum, cluster) => sum + cluster.estimated_people, 0);
-  const criticalCount = clusters.filter((cluster) => cluster.priority_score >= 70).length;
-  const topPriority = Math.max(...clusters.map((cluster) => Math.round(cluster.priority_score)), 0);
-
-  const statValues = [clusters.length, totalAffected.toLocaleString(), criticalCount, `${topPriority}%`];
+  const criticalCount = clusters.filter((cluster) => cluster.priority_score >= 70 && cluster.status !== "resolved").length;
+  const topPriority = Math.max(0, ...clusters.map((cluster) => Math.round(cluster.priority_score)));
+  const statValues = [activeCount, totalAffected.toLocaleString(), criticalCount, `${topPriority}%`];
 
   return (
-    <>
-      <style>{`
-        @import url('https://fonts.googleapis.com/css2?family=Sora:wght@400;600;700;800&family=Manrope:wght@400;500;600;700;800&display=swap');
-        * { box-sizing: border-box; margin: 0; padding: 0; }
-        body { background: #f5f0e8; }
-        .ufixr-shell { min-height: 100vh; display: grid; grid-template-rows: auto 1fr; padding: 20px; gap: 20px; background: #f5f0e8; font-family: 'Manrope', sans-serif; }
-        .leaflet-container { width: 100%; height: 100%; font-family: 'Manrope', sans-serif; }
-        .leaflet-control-zoom a { color: #1a1410; }
-        .live-dot { width: 7px; height: 7px; border-radius: 50%; background: #ff4d1c; animation: pulse-live 1.8s ease-in-out infinite; }
-        @keyframes pulse-live { 0%,100% { box-shadow: 0 0 0 0 rgba(255,77,28,0.6); } 50% { box-shadow: 0 0 0 5px rgba(255,77,28,0); } }
-        .queue-list::-webkit-scrollbar { width: 4px; }
-        .queue-list::-webkit-scrollbar-thumb { background: #ede5d4; border-radius: 2px; }
-        @media (max-width: 1100px) { .body-grid { grid-template-columns: 1fr !important; } .stats-row { grid-template-columns: repeat(2,1fr) !important; } }
-        @media (max-width: 700px) { .ufixr-shell { padding: 12px; gap: 12px; } .stats-row { grid-template-columns: 1fr 1fr !important; } .topbar-filters-wrap { display: none !important; } }
-      `}</style>
-
-      <div className="ufixr-shell">
-        <header style={{ display: "grid", gridTemplateColumns: "auto 1fr auto", alignItems: "center", gap: 32, background: "#fff", border: "1px solid rgba(26,20,16,0.08)", borderRadius: 24, padding: "14px 28px", boxShadow: "0 2px 24px rgba(26,20,16,0.04)" }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
-            <img src="/ufixr-logo.png" alt="UFixr logo" style={{ width: 48, height: 48, objectFit: "contain", flexShrink: 0 }} />
-            <div>
-              <div style={{ fontFamily: "Sora, sans-serif", fontSize: 18, fontWeight: 800, letterSpacing: "-0.04em" }}>UFixr</div>
-              <div style={{ fontSize: 12, color: "#7a6e66", fontWeight: 400, letterSpacing: "0.04em" }}>Dispatch Intelligence</div>
+    <div className="relative min-h-screen bg-sand px-4 py-6 text-dusk sm:px-6 lg:px-10">
+      <div className="mx-auto flex max-w-[1400px] flex-col gap-6">
+        <section className="rounded-[36px] bg-gradient-to-br from-[#1d120b] via-[#26160f] to-[#4f2d1a] p-6 text-white shadow-glow lg:p-10">
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex items-center gap-4">
+              <img src="/ufixr-logo.png" alt="UFixr" className="h-14 w-14 rounded-2xl bg-white/10 p-2" />
+              <div>
+                <p className="font-sora text-2xl font-black tracking-tight">UFixr Command</p>
+                <p className="text-sm text-white/80">Real-time city utility intelligence for Bengaluru</p>
+              </div>
+            </div>
+            <div className="flex flex-wrap items-center gap-3">
+              <div className="flex items-center gap-3 rounded-full border border-white/20 bg-white/10 px-4 py-2 text-sm font-semibold">
+                <span className="live-dot" />
+                LIVE · refresh in {tick}s
+              </div>
+              <button type="button" onClick={loadClusters} className="rounded-full bg-white px-5 py-2 text-sm font-bold text-[#1f1410] shadow-lg">
+                Refresh data
+              </button>
             </div>
           </div>
 
-          <div className="topbar-filters-wrap" style={{ display: "flex", alignItems: "center", gap: 8, justifyContent: "center" }}>
-            {filters.map((filter) => (
-              <button
-                key={filter}
-                onClick={() => setActiveFilter(filter)}
-                style={{
-                  border: "1px solid",
-                  borderColor: activeFilter === filter ? "#1a1410" : "rgba(26,20,16,0.14)",
-                  borderRadius: 999,
-                  padding: "8px 18px",
-                  fontSize: 13,
-                  fontWeight: 600,
-                  background: activeFilter === filter ? "#1a1410" : "transparent",
-                  color: activeFilter === filter ? "#fff" : "#3d3530",
-                  cursor: "pointer",
-                  fontFamily: "Manrope, sans-serif",
-                }}
+          <div className="mt-6 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+            {STAT_CARDS.map((stat, index) => (
+              <motion.div
+                key={stat.label}
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ delay: index * 0.08, duration: 0.4, ease: "easeOut" }}
+                className="rounded-3xl border border-white/15 bg-white/10 p-5"
               >
-                {filter}
-              </button>
+                <div className={`h-11 w-11 rounded-2xl ${stat.iconBg} flex items-center justify-center text-xs font-black`}>{stat.code}</div>
+                <p className="mt-4 text-xs font-semibold uppercase tracking-[0.2em] text-white/70">{stat.label}</p>
+                <p className="mt-2 font-sora text-4xl font-black">{statValues[index]}</p>
+                <p className="mt-1 text-sm text-white/70">{stat.note}</p>
+                <div className={`mt-4 h-1 rounded-full ${stat.accent}`} />
+              </motion.div>
             ))}
           </div>
 
-          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "8px 14px", borderRadius: 999, background: "#fff0ec", border: "1px solid rgba(255,77,28,0.18)", fontSize: 12, fontWeight: 700, color: "#ff4d1c", letterSpacing: "0.04em" }}>
-              <span className="live-dot" />
-              LIVE {tick}s
-            </div>
-            <button onClick={loadClusters} style={{ border: "1px solid rgba(26,20,16,0.14)", borderRadius: 999, padding: "8px 18px", background: "#1a1410", color: "#fff", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: "Manrope, sans-serif" }}>
-              Refresh
-            </button>
+          <div className="mt-6 grid gap-4 lg:grid-cols-2">
+            <FilterGroup label="Utility focus" options={FILTERS} activeValue={activeFilter} onChange={setActiveFilter} />
+            <FilterGroup label="Status lens" options={STATUS_FILTERS} activeValue={activeStatusFilter} onChange={setActiveStatusFilter} />
           </div>
-        </header>
+        </section>
 
-        <div className="body-grid" style={{ display: "grid", gridTemplateColumns: "1fr 380px", gap: 20, minHeight: 0 }}>
-          <div style={{ display: "grid", gridTemplateRows: "auto 1fr", gap: 20, minHeight: 0 }}>
-            <div className="stats-row" style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 14 }}>
-              {STAT_CARDS.map((stat, index) => (
-                <div key={stat.label} style={{ background: "#fff", border: "1px solid rgba(26,20,16,0.08)", borderRadius: 24, padding: "22px 22px 18px", position: "relative", overflow: "hidden" }}>
-                  <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 3, borderRadius: "0 0 24px 24px", background: stat.accent }} />
-                  <div style={{ width: 44, height: 44, borderRadius: 12, background: stat.iconBg, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, marginBottom: 14 }}>
-                    <IconBadge kind={stat.icon} />
-                  </div>
-                  <div style={{ fontSize: 12, fontWeight: 600, color: "#7a6e66", letterSpacing: "0.04em", marginBottom: 6 }}>{stat.label}</div>
-                  <div style={{ fontFamily: "Sora, sans-serif", fontSize: 36, fontWeight: 800, letterSpacing: "-0.05em", lineHeight: 1, marginBottom: 6 }}>{statValues[index]}</div>
-                  <div style={{ fontSize: 12, color: "#7a6e66", fontWeight: 400 }}>{stat.note}</div>
-                </div>
-              ))}
+        <section className="grid gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+          <div ref={mapPanelRef} className="rounded-[32px] glass-panel p-6">
+            <div className="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-semibold text-smoke">Metro live stack</p>
+                <h2 className="font-sora text-2xl font-black text-dusk">Bengaluru outage map</h2>
+              </div>
+              <div className="flex flex-wrap items-center gap-5 text-sm font-semibold text-smoke">
+                {[
+                  { color: "bg-ember", label: "Electricity" },
+                  { color: "bg-tide", label: "Water" },
+                  { color: "bg-[#cc1a1a]", label: "Critical" },
+                ].map((legend) => (
+                  <span key={legend.label} className="flex items-center gap-2">
+                    <span className={`h-3 w-3 rounded-full ${legend.color}`} />
+                    {legend.label}
+                  </span>
+                ))}
+              </div>
             </div>
-
-            <div style={{ background: "#fff", border: "1px solid rgba(26,20,16,0.08)", borderRadius: 24, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "18px 22px", borderBottom: "1px solid rgba(26,20,16,0.08)", flexShrink: 0 }}>
-                <span style={{ fontFamily: "Sora, sans-serif", fontSize: 16, fontWeight: 700, letterSpacing: "-0.02em" }}>Bengaluru outage map</span>
-                <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-                  {[["#ff4d1c", "Electricity"], ["#0058cc", "Water"], ["#cc1a1a", "Critical"]].map(([color, label]) => (
-                    <div key={label} style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 12, color: "#3d3530" }}>
-                      <span style={{ width: 10, height: 10, borderRadius: "50%", background: color as string, display: "inline-block" }} />
-                      {label}
-                    </div>
-                  ))}
-                </div>
-              </div>
-              <div style={{ flex: 1, minHeight: 420, position: "relative" }}>
-                <LiveMap clusters={filtered.length > 0 ? filtered : clusters} />
-              </div>
+            <div className="mt-4 overflow-hidden rounded-[28px] border border-[#eadfd1] bg-white">
+              <LiveMap
+                clusters={filtered.length > 0 ? filtered : clusters}
+                onMapReady={handleMapReady}
+                selectedClusterId={selectedClusterId}
+                onSelectCluster={handleSelectCluster}
+              />
             </div>
           </div>
 
-          <div style={{ background: "#fff", border: "1px solid rgba(26,20,16,0.08)", borderRadius: 24, display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden" }}>
-            <div style={{ padding: "22px 22px 14px", borderBottom: "1px solid rgba(26,20,16,0.08)", flexShrink: 0 }}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 14 }}>
-                <h2 style={{ fontFamily: "Sora, sans-serif", fontSize: 20, fontWeight: 800, letterSpacing: "-0.04em" }}>Priority queue</h2>
-                <span style={{ width: 26, height: 26, borderRadius: "50%", background: "#fff0ec", color: "#ff4d1c", fontSize: 12, fontWeight: 700, display: "inline-flex", alignItems: "center", justifyContent: "center" }}>{filtered.length}</span>
+          <div className="glass-panel flex min-h-0 flex-col rounded-[32px] p-6">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="font-sora text-2xl font-black text-dusk">Issue workspace</h2>
+                <p className="text-sm text-smoke">Monitoring {filtered.length} active clusters</p>
               </div>
-              <p style={{ fontSize: 12, color: "#7a6e66", fontWeight: 400, marginBottom: 12 }}>Sorted by urgency score / auto-refreshes every 15 s</p>
-              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                {sorts.map((sort) => (
+              <span className="rounded-full bg-shell px-4 py-1 text-sm font-semibold text-dusk">Total {clusters.length}</span>
+            </div>
+            <div className="mt-4 flex w-full flex-wrap items-center gap-3">
+              <div className="min-w-[220px] flex-1">
+                <label className="flex items-center gap-2 rounded-2xl border border-[#eadfd1] bg-white px-3 py-2 text-sm text-smoke" htmlFor="queue-search">
+                  <span>🔎</span>
+                  <input
+                    id="queue-search"
+                    type="text"
+                    value={queueSearch}
+                    onChange={(event) => setQueueSearch(event.target.value)}
+                    placeholder="Search by cluster, status, technician"
+                    className="h-8 flex-1 bg-transparent text-sm text-dusk placeholder:text-smoke focus:outline-none"
+                    autoComplete="off"
+                  />
+                </label>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {SORT_OPTIONS.map((option) => (
                   <button
-                    key={sort}
-                    onClick={() => setSortMode(sort)}
-                    style={{
-                      padding: "5px 12px",
-                      borderRadius: 999,
-                      border: "1px solid",
-                      borderColor: sortMode === sort ? "#1a1410" : "rgba(26,20,16,0.08)",
-                      fontSize: 11,
-                      fontWeight: 600,
-                      cursor: "pointer",
-                      fontFamily: "Manrope, sans-serif",
-                      background: sortMode === sort ? "#1a1410" : "transparent",
-                      color: sortMode === sort ? "#fff" : "#7a6e66",
-                    }}
+                    key={option}
+                    type="button"
+                    onClick={() => setSortMode(option)}
+                    className={`rounded-full border px-3 py-1.5 text-xs font-semibold transition ${
+                      sortMode === option
+                        ? "border-transparent bg-dusk text-white shadow"
+                        : "border-[#eadfd1] text-smoke hover:bg-sand"
+                    }`}
                   >
-                    {sort}
+                    {option}
                   </button>
                 ))}
               </div>
             </div>
-
-            {error ? <div style={{ margin: "12px 14px 0", color: "#8a0e0e", background: "#ffeaea", padding: "10px 12px", borderRadius: 12, fontSize: 12, fontWeight: 700 }}>{error}</div> : null}
-
-            <div className="queue-list" style={{ flex: 1, overflowY: "auto", padding: 14, display: "flex", flexDirection: "column", gap: 10 }}>
-              {filtered.map((cluster) => (
-                <ClusterCard key={cluster.id} cluster={cluster} onStatusChange={handleStatusChange} />
-              ))}
+            {error ? <div className="mt-4 rounded-2xl bg-[#ffeaea] px-4 py-3 text-sm font-semibold text-[#8a0e0e]">{error}</div> : null}
+            <div className="mt-4 flex flex-1 flex-col gap-4 lg:min-h-[520px]">
+              <div className="flex min-h-[260px] flex-col rounded-[32px] border border-[#f2e7da] bg-white/90 p-5">
+                <div className="flex flex-wrap items-center justify-between gap-3 text-xs font-semibold text-smoke">
+                  <div>
+                    <span>
+                      Showing {showingStart}-{showingEnd} of {searchableQueue.length}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="button"
+                      onClick={() => handlePageNav("prev")}
+                      disabled={safePage === 0}
+                      className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition ${
+                        safePage === 0 ? "border-[#eadfd1] text-[#c5bfb6]" : "border-[#eadfd1] text-dusk hover:bg-sand"
+                      }`}
+                    >
+                      Prev
+                    </button>
+                    <span className="text-[11px] font-semibold text-dusk">
+                      Page {safePage + 1} / {totalQueuePages}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => handlePageNav("next")}
+                      disabled={safePage >= totalQueuePages - 1}
+                      className={`rounded-full border px-3 py-1 text-[11px] font-semibold transition ${
+                        safePage >= totalQueuePages - 1 ? "border-[#eadfd1] text-[#c5bfb6]" : "border-[#eadfd1] text-dusk hover:bg-sand"
+                      }`}
+                    >
+                      Next
+                    </button>
+                  </div>
+                </div>
+                <div className="queue-scroll mt-3 flex-1 space-y-2 overflow-y-auto">
+                  {visibleQueue.length ? (
+                    visibleQueue.map((cluster) => (
+                      <QueueCard key={cluster.id} cluster={cluster} isSelected={cluster.id === selectedClusterId} onSelect={handleSelectCluster} />
+                    ))
+                  ) : (
+                    <div className="rounded-2xl border border-dashed border-[#eadfd1] bg-white/70 px-4 py-8 text-center text-sm text-smoke">
+                      No clusters match the current search or filters.
+                    </div>
+                  )}
+                </div>
+              </div>
             </div>
           </div>
-        </div>
+        </section>
+
+        <section className="glass-panel rounded-[32px] p-6">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <div>
+              <h2 className="font-sora text-2xl font-black text-dusk">Cluster focus</h2>
+              <p className="text-sm text-smoke">
+                {selectedCluster ? `Tracking cluster #${selectedCluster.id}` : "Select a cluster from the queue or map"}
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => setSelectedClusterId(null)}
+              disabled={!selectedCluster}
+              className={`rounded-full px-4 py-1 text-sm font-semibold transition ${
+                selectedCluster ? "border border-dusk text-dusk hover:bg-sand" : "border border-[#eadfd1] text-[#c5bfb6]"
+              }`}
+            >
+              Clear
+            </button>
+          </div>
+          <div className="mt-4">
+            <ClusterFocusPanel
+              cluster={selectedCluster}
+              onStatusChange={handleStatusChange}
+              onAssign={handleAssign}
+              onZoomToLocation={handleZoomToLocation}
+            />
+          </div>
+        </section>
       </div>
-    </>
+    </div>
   );
 }
-
 
 
