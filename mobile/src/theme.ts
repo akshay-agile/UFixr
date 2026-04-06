@@ -1,48 +1,48 @@
-// Modern Light Theme - Production Ready with WCAG AAA Compliance
+// Shared color system used across the mobile app.
 export const T = {
-  // Background & Base
   white: "#ffffff",
-  background: "#f8fafb",
+  background: "#f6f8fc",
   surface: "#ffffff",
-  
-  // Primary Colors - Vibrant & Modern
-  primary: "#6366f1", // Indigo - Professional, modern
-  primaryLight: "#e0e7ff",
-  primaryDark: "#4f46e5",
-  
-  // Utility Colors - Distinct & Clear
-  electricity: "#f59e0b", // Amber - Clear electricity indicator
+  parchment: "#f5f7fb",
+
+  primary: "#5b5cf0",
+  primaryLight: "#e6e8ff",
+  primaryDark: "#4446d6",
+  gradientPrimary: "#5b5cf0",
+  gradientSecondary: "#1f7bff",
+
+  electricity: "#f59e0b",
   electricityLight: "#fef3c7",
-  electricSoft: "#fef9e7", // Ultra light for backgrounds
-  
-  water: "#3b82f6", // Blue - Clear water indicator
-  waterLight: "#eff6ff",
-  waterSoft: "#f0f9ff", // Ultra light for backgrounds
-  
-  // Status Colors - WCAG AAA Compliant
-  success: "#10b981", // Emerald
-  successLight: "#d1fae5", // Better contrast than #ecfdf5
-  emeraldSoft: "#f0fdf4", // Ultra light
-  
-  warning: "#f59e0b", // Amber
-  warningLight: "#fcd34d", // Better contrast than #fffbeb
-  amberSoft: "#fffbeb", // Light
-  
-  critical: "#dc2626", // Darker red for better contrast (#ef4444 too light)
-  criticalLight: "#fee2e2", // Better contrast
+  electric: "#4f46e5",
+  electricSoft: "#eef2ff",
+
+  water: "#2f7df6",
+  waterLight: "#dbeafe",
+  waterSoft: "#eff6ff",
+
+  success: "#10b981",
+  successLight: "#d1fae5",
+  emerald: "#10b981",
+  emeraldSoft: "#ecfdf5",
+
+  warning: "#f59e0b",
+  warningLight: "#fde68a",
+  amber: "#f59e0b",
+  amberSoft: "#fffbeb",
+
+  critical: "#dc2626",
+  criticalLight: "#fee2e2",
   criticalSoft: "#fef2f2",
-  
-  // Text Colors
-  text: "#0f172a", // Navy - Professional text
-  textSecondary: "#475569", // Slate
-  textTertiary: "#64748b", // Medium slate
+
+  text: "#0f172a",
+  textSecondary: "#475569",
+  textTertiary: "#64748b",
   textInvert: "#ffffff",
-  
-  // Border & Dividers
-  border: "#e2e8f0",
-  borderLight: "#f1f5f9",
-  
-  // Gradients (as string representations)
-  gradientPrimary: "#6366f1",
-  gradientSecondary: "#8b5cf6",
+  ink: "#0f172a",
+  inkMuted: "#667085",
+  inkFaint: "#98a2b3",
+
+  border: "#dbe3ee",
+  borderLight: "#edf2f8",
+  line: "#e6ebf2",
 } as const;
