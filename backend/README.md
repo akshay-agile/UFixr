@@ -1,20 +1,12 @@
 # UFixr Backend
 
-This is the FastAPI backend for UFixr. It provides:
-
-- phone/password auth
-- report creation
-- image upload
-- clustering and priority scoring
-- SQLite persistence
-- admin cluster APIs
-- in-app alert generation
+FastAPI backend for authentication, report intake, clustering, admin operations, and notifications.
 
 ## Requirements
 
 - Python 3.11+
 
-## Run locally
+## Install and Run
 
 ```powershell
 cd backend
@@ -24,13 +16,55 @@ pip install -r requirements.txt
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-## URLs
+## Runtime URLs
 
-- health check: `http://127.0.0.1:8000/health`
-- API base: `http://127.0.0.1:8000`
+- Health check: http://127.0.0.1:8000/health
+- API base: http://127.0.0.1:8000
+- Static uploads mount: /uploads
 
-## Notes
+## Data and Storage
 
-- the SQLite database is created automatically
-- local uploaded images are stored in `app/uploads`
-- for phone testing, the mobile app should point to your laptop's LAN IP, not `127.0.0.1`
+- SQLite DB is created automatically by startup initialization
+- Uploaded images are stored in app/uploads
+
+## Current API Surface
+
+Public routes:
+
+- GET /health
+- POST /auth/register
+- POST /auth/login
+- POST /upload
+- GET /technicians/options
+- GET /reports/suggestions
+- GET /admin/technicians
+- GET /admin/clusters
+- POST /admin/clusters/{cluster_id}/assign
+- PATCH /admin/clusters/{cluster_id}/status
+
+Protected routes (Authorization: Bearer <token>):
+
+- GET /me
+- POST /reports
+- GET /reports/me
+- GET /reports/nearby
+- GET /notifications
+
+## Core Capabilities
+
+- Phone/password auth with session token flow
+- Report creation with utility type, issue type, impact level, and optional photos
+- Cluster analysis, priority scoring, and report-to-cluster assignment
+- Admin status updates and technician assignment per cluster
+- Notification generation for user-facing activity
+
+## Dependencies
+
+From requirements.txt:
+
+- fastapi
+- uvicorn[standard]
+- python-multipart
+- scikit-learn
+- pydantic
+- email-validator
