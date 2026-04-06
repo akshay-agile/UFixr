@@ -202,13 +202,33 @@ type QueueCardProps = {
 };
 
 function resolveReportPhotos(report: ClusterReport) {
-  if (report.photo_urls?.length) {
-    return report.photo_urls;
+  const rawPhotos = report.photo_urls?.length
+    ? report.photo_urls
+    : report.photo_url
+    ? [report.photo_url]
+    : [];
+
+  return rawPhotos.map(normalizeAssetUrl).filter(Boolean);
+}
+
+function normalizeAssetUrl(photoUrl: string | null | undefined) {
+  if (!photoUrl) {
+    return "";
   }
-  if (report.photo_url) {
-    return [report.photo_url];
+
+  try {
+    const apiOrigin = new URL(API_BASE_URL).origin;
+    const parsed = new URL(photoUrl, apiOrigin);
+
+    // Force uploaded evidence to load from the dashboard's backend origin.
+    if (parsed.pathname.startsWith("/uploads/")) {
+      return `${apiOrigin}${parsed.pathname}${parsed.search}`;
+    }
+
+    return parsed.toString();
+  } catch {
+    return photoUrl;
   }
-  return [];
 }
 
 function QueueCard({ cluster, isSelected, onSelect }: QueueCardProps) {
@@ -1034,5 +1054,7 @@ export default function UFixrDashboard() {
     </div>
   );
 }
+
+
 
 
