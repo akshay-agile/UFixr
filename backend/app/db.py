@@ -112,15 +112,37 @@ def init_db() -> None:
             FOREIGN KEY(report_id) REFERENCES reports(id) ON DELETE CASCADE,
             FOREIGN KEY(cluster_id) REFERENCES clusters(id) ON DELETE SET NULL
         );
+
+        CREATE TABLE IF NOT EXISTS technician_reviews (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            report_id INTEGER NOT NULL UNIQUE,
+            technician_id INTEGER NOT NULL,
+            user_id INTEGER NOT NULL,
+            rating INTEGER NOT NULL,
+            comment TEXT,
+            tags TEXT,
+            created_at TEXT NOT NULL,
+            FOREIGN KEY(report_id) REFERENCES reports(id) ON DELETE CASCADE,
+            FOREIGN KEY(technician_id) REFERENCES technicians(id) ON DELETE CASCADE,
+            FOREIGN KEY(user_id) REFERENCES users(id) ON DELETE CASCADE
+        );
         """
     )
 
     ensure_column(connection, "clusters", "technician_id", "technician_id INTEGER REFERENCES technicians(id) ON DELETE SET NULL")
     ensure_column(connection, "clusters", "technician_eta_minutes", "technician_eta_minutes INTEGER")
+    ensure_column(connection, "clusters", "estimated_resolution_minutes", "estimated_resolution_minutes INTEGER")
     ensure_column(connection, "clusters", "assignment_note", "assignment_note TEXT")
     ensure_column(connection, "reports", "preferred_technician_id", "preferred_technician_id INTEGER REFERENCES technicians(id) ON DELETE SET NULL")
     ensure_column(connection, "reports", "issue_type", "issue_type TEXT")
     ensure_column(connection, "reports", "impact_level", "impact_level TEXT")
+    ensure_column(connection, "reports", "video_url", "video_url TEXT")
+    ensure_column(connection, "reports", "availability_status", "availability_status TEXT DEFAULT 'unknown'")
+    ensure_column(connection, "reports", "availability_note", "availability_note TEXT")
+    ensure_column(connection, "reports", "availability_windows", "availability_windows TEXT")
+    ensure_column(connection, "reports", "completion_code", "completion_code TEXT")
+    ensure_column(connection, "reports", "resolved_at", "resolved_at TEXT")
+    ensure_column(connection, "reports", "completion_confirmed_at", "completion_confirmed_at TEXT")
 
     technician_count = connection.execute("SELECT COUNT(*) AS count FROM technicians").fetchone()["count"]
     if technician_count == 0:

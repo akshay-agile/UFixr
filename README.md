@@ -4,13 +4,18 @@ UFixr is a full-stack utility fault reporting system that connects citizens with
 
 ## 🎯 Features
 
-- **Mobile App**: Citizens can report electricity and water faults with photos and location
-- **Admin Dashboard**: Utilities view clustered outages on a live map and update status
+- **Mobile App**: Citizens can report electricity and water faults with photos, video, and location
+- **Admin Dashboard**: Utilities view clustered outages on a live map, inspect photo/video evidence, and update status
 - **Smart Clustering**: Backend automatically groups nearby reports
 - **Priority Scoring**: Automatic priority calculation for technician dispatch
+- **Live Issue Tracking**: Users can follow report timeline updates from submission to resolution
+- **Availability & Reschedule Flow**: Users can confirm whether they will be available when a technician arrives
+- **ETA + Resolution Estimate**: Assigned jobs include technician ETA and estimated resolution time
+- **Verified Completion**: Resolved issues can be confirmed with a service verification code
+- **Verified Reviews**: Users can leave technician reviews only after confirmed job completion
 - **Real-time Alerts**: Users are notified when report status changes
 - **Authentication**: Secure phone + password login system
-- **Image Uploads**: Optional photo documentation of faults
+- **Rich Evidence Uploads**: Optional photo and video documentation of faults
 
 ## 🏗️ Architecture
 
@@ -65,7 +70,7 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 - Health check: `http://127.0.0.1:8000/health`
 - API base: `http://127.0.0.1:8000`
 - Database: Auto-created SQLite by backend startup
-- Uploads: Images stored in `backend/app/uploads/`
+- Uploads: Photo/video evidence stored in `backend/app/uploads/`
 - Expected health response: `{"status":"ok"}`
 
 ### 3. Start Admin Dashboard (React + Vite)
@@ -81,7 +86,7 @@ npm run dev
 **Admin Details:**
 
 - URL: `http://127.0.0.1:5173` (shown in terminal)
-- Features: Live map, cluster management, status updates, technician assignment
+- Features: Live map, cluster management, status updates, technician assignment, evidence review, ETA/resolution insights
 - Backend dependency: Keep backend running while using dashboard
 - Backend URL source: currently hardcoded in `admin/src/App.tsx`
 
@@ -124,7 +129,7 @@ Dashboard backend URL is currently configured in `admin/src/App.tsx` as:
 
 ## 📁 Project Structure
 
-```
+```text
 UFixr/
 ├── backend/              # FastAPI server
 │   ├── app/
@@ -134,7 +139,7 @@ UFixr/
 │   │   ├── ml.py         # Clustering and scoring logic
 │   │   ├── schemas.py    # Request models
 │   │   ├── services.py   # Business logic helpers
-│   │   └── uploads/      # User images
+│   │   └── uploads/      # User photo/video evidence
 │   └── requirements.txt  # Python dependencies
 │
 ├── mobile/               # React Native app
@@ -184,7 +189,7 @@ Both apps use a modern, accessibility-focused design language.
 
 - Phone/password authentication implemented
 - SQLite is local for development simplicity
-- Image uploads stored server-side
+- Photo/video uploads stored server-side
 - API is CORS-enabled for local integration
 
 For production:
@@ -192,7 +197,7 @@ For production:
 - Deploy behind HTTPS
 - Move secrets and runtime config to environment variables
 - Use managed DB and backups
-- Use cloud object storage for images
+- Use cloud object storage for uploaded media
 
 ## 📱 Supported Devices
 
@@ -221,6 +226,7 @@ For production:
 
 - **Map not loading**: Confirm backend is running and `/admin/clusters` returns data
 - **Status/assign updates failing**: Check backend logs and network requests from dashboard
+- **Evidence missing in dashboard**: Confirm uploaded files exist under `/uploads` and the backend origin matches `admin/src/App.tsx`
 
 ## 📊 API Endpoints
 
@@ -235,18 +241,21 @@ All routes are under API base `http://127.0.0.1:8000` (no `/api` prefix).
 
 **Reports & Notifications:**
 
-- `POST /upload` - Upload report photo
+- `POST /upload` - Upload report evidence file (photo or video)
 - `POST /reports` - Create new report
 - `GET /reports/me` - List current user's reports
 - `GET /reports/nearby` - Nearby active clusters for map context
 - `GET /reports/suggestions` - Suggest cluster/technician options
+- `PATCH /reports/{report_id}/availability` - Update technician-visit availability / reschedule request
+- `POST /reports/{report_id}/confirm-resolution` - Verify issue resolution with completion code
+- `POST /reports/{report_id}/review` - Submit a verified technician review
 - `GET /notifications` - User notifications
 
 **Admin Cluster Operations:**
 
 - `GET /admin/technicians` - List technicians
 - `GET /admin/clusters` - Get all clusters with analytics
-- `POST /admin/clusters/{cluster_id}/assign` - Assign technician to cluster
+- `POST /admin/clusters/{cluster_id}/assign` - Assign technician to cluster with ETA and resolution estimate
 - `PATCH /admin/clusters/{cluster_id}/status` - Update cluster/report status
 
 ## 📚 Project Documentation
@@ -274,6 +283,9 @@ All routes are under API base `http://127.0.0.1:8000` (no `/api` prefix).
 - @react-navigation/native
 - @react-navigation/native-stack
 - @react-navigation/bottom-tabs
+- expo-image-picker
+- expo-location
+- expo-camera
 - react-native-maps
 
 **Admin (`admin/package.json`):**
@@ -301,4 +313,4 @@ When making feature or infrastructure changes, update docs in the same PR:
 
 Production-ready hackathon MVP.
 
-**Last Updated:** April 7, 2026
+**Last Updated:** April 8, 2026

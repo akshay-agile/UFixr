@@ -15,22 +15,29 @@ from .schemas import (
     ClusterAssignmentRequest,
     ClusterStatusUpdateRequest,
     LoginRequest,
+    ReportAvailabilityUpdateRequest,
     RegisterRequest,
     ReportCreateRequest,
+    ReportResolutionRequest,
+    ReportReviewCreateRequest,
 )
 from .ml import analyze_cluster, analyze_stats, cluster_radius_from_count
 from .services import (
-    assign_cluster,
     cluster_stats_from_row,
     create_notification,
+    create_review,
     get_cluster_stats,
     list_technicians,
     nearby_cluster_suggestions,
+    parse_asset_field,
     recluster_active_reports,
+    confirm_report_resolution,
     report_timeline,
     serialize_technician,
     sync_cluster_status,
     utc_now,
+    update_cluster_assignment,
+    update_report_availability,
 )
 
 app = FastAPI(title="UFixr API", version="1.1.0")
@@ -107,23 +114,6 @@ def derive_severity(utility_type: str, issue_type: str, impact_level: str) -> in
     return min(base + IMPACT_BONUS.get(impact_level, 0), 5)
 
 
-def parse_photo_field(value: str | None) -> tuple[list[str], str | None]:
-    if not value:
-        return [], None
-    try:
-        parsed = json.loads(value)
-    except json.JSONDecodeError:
-        return [value], value
-    if isinstance(parsed, list):
-        cleaned = [str(item) for item in parsed if isinstance(item, str) and item]
-        if not cleaned:
-            return [], None
-        return cleaned, cleaned[0]
-    if isinstance(parsed, str) and parsed:
-        return [parsed], parsed
-    return [], None
-
-
 @app.on_event("startup")
 def startup() -> None:
     init_db()
@@ -175,12 +165,13 @@ def login(payload: LoginRequest) -> dict:
 
 @app.post("/upload")
 def upload_photo(request: Request, file: UploadFile = File(...)) -> dict:
-    extension = Path(file.filename or "image.jpg").suffix or ".jpg"
+    extension = Path(file.filename or "upload.bin").suffix or ".bin"
     file_name = f"{uuid.uuid4()}{extension}"
     destination = uploads_dir / file_name
     with destination.open("wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
-    return {"photo_url": str(request.base_url).rstrip("/") + f"/uploads/{file_name}"}
+    file_url = str(request.base_url).rstrip("/") + f"/uploads/{file_name}"
+    return {"file_url": file_url, "photo_url": file_url, "video_url": file_url}
 
 
 @app.get("/me")
@@ -219,7 +210,12 @@ def create_report(payload: ReportCreateRequest, current_user: dict = Depends(get
     submitted_photos = [url for url in (payload.photo_urls or []) if url]
     if not submitted_photos and payload.photo_url:
         submitted_photos = [payload.photo_url]
+    submitted_videos = [url for url in (payload.video_urls or []) if url]
+    if not submitted_videos and payload.video_url:
+        submitted_videos = [payload.video_url]
     photo_payload = json.dumps(submitted_photos) if submitted_photos else None
+    video_payload = json.dumps(submitted_videos) if submitted_videos else None
+    availability_windows = json.dumps([item for item in (payload.availability_windows or []) if item])
 
     cursor = connection.execute(
         """
@@ -232,13 +228,17 @@ def create_report(payload: ReportCreateRequest, current_user: dict = Depends(get
             latitude,
             longitude,
             photo_url,
+            video_url,
             preferred_technician_id,
             issue_type,
             impact_level,
+            availability_status,
+            availability_note,
+            availability_windows,
             status,
             created_at,
             updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
         """,
         (
             current_user["id"],
@@ -249,9 +249,13 @@ def create_report(payload: ReportCreateRequest, current_user: dict = Depends(get
             payload.latitude,
             payload.longitude,
             photo_payload,
+            video_payload,
             payload.preferred_technician_id,
             payload.issue_type,
             payload.impact_level,
+            payload.availability_status or "unknown",
+            payload.availability_note.strip(),
+            availability_windows,
             now,
             now,
         ),
@@ -264,6 +268,14 @@ def create_report(payload: ReportCreateRequest, current_user: dict = Depends(get
         """,
         (report_id, "We received your utility fault report and queued it for clustering.", now),
     )
+    if submitted_videos:
+        connection.execute(
+            """
+            INSERT INTO report_events (report_id, cluster_id, status, title, detail, created_at)
+            VALUES (?, NULL, 'pending', 'Video evidence attached', ?, ?)
+            """,
+            (report_id, f"{len(submitted_videos)} video evidence file(s) added for triage.", now),
+        )
     connection.commit()
     connection.close()
 
@@ -293,13 +305,16 @@ def my_reports(current_user: dict = Depends(get_current_user)) -> dict:
     rows = connection.execute(
         """
         SELECT reports.*, clusters.priority_score, clusters.report_count, clusters.estimated_people,
-               clusters.technician_eta_minutes, clusters.assignment_note,
+               clusters.technician_eta_minutes, clusters.estimated_resolution_minutes, clusters.assignment_note,
                technicians.id AS technician_id, technicians.name AS technician_name,
                technicians.phone AS technician_phone, technicians.rating AS technician_rating,
-               technicians.specialization AS technician_specialization, technicians.zone AS technician_zone
+               technicians.specialization AS technician_specialization, technicians.zone AS technician_zone,
+               technician_reviews.rating AS review_rating, technician_reviews.comment AS review_comment,
+               technician_reviews.tags AS review_tags, technician_reviews.created_at AS review_created_at
         FROM reports
         LEFT JOIN clusters ON clusters.id = reports.cluster_id
         LEFT JOIN technicians ON technicians.id = clusters.technician_id
+        LEFT JOIN technician_reviews ON technician_reviews.report_id = reports.id
         WHERE reports.user_id = ?
         ORDER BY reports.created_at DESC
         """,
@@ -309,9 +324,15 @@ def my_reports(current_user: dict = Depends(get_current_user)) -> dict:
     items = []
     for row in rows:
         item = dict(row)
-        photo_urls, primary_photo = parse_photo_field(item.get("photo_url"))
+        photo_urls, primary_photo = parse_asset_field(item.get("photo_url"))
+        video_urls, primary_video = parse_asset_field(item.get("video_url"))
+        availability_windows, _ = parse_asset_field(item.get("availability_windows"))
         item["photo_urls"] = photo_urls
         item["photo_url"] = primary_photo
+        item["video_urls"] = video_urls
+        item["video_url"] = primary_video
+        item["availability_windows"] = availability_windows
+        item["completion_code"] = item.get("completion_code")
         technician = None
         if row["technician_id"]:
             technician = {
@@ -322,10 +343,21 @@ def my_reports(current_user: dict = Depends(get_current_user)) -> dict:
                 "specialization": row["technician_specialization"],
                 "zone": row["technician_zone"],
                 "eta_minutes": row["technician_eta_minutes"],
+                "estimated_resolution_minutes": row["estimated_resolution_minutes"],
                 "assignment_note": row["assignment_note"],
             }
         item["technician"] = technician
         item["timeline"] = report_timeline(connection, row["id"])
+        item["review"] = (
+            {
+                "rating": row["review_rating"],
+                "comment": row["review_comment"],
+                "tags": json.loads(row["review_tags"]) if row["review_tags"] else [],
+                "created_at": row["review_created_at"],
+            }
+            if row["review_rating"] is not None
+            else None
+        )
         items.append(item)
 
     connection.close()
@@ -414,8 +446,8 @@ def admin_clusters() -> dict:
     reports = connection.execute(
         """
         SELECT reports.id, reports.cluster_id, reports.title, reports.status, reports.utility_type,
-               reports.created_at, reports.photo_url, reports.severity, reports.preferred_technician_id,
-               reports.issue_type, reports.impact_level
+               reports.created_at, reports.photo_url, reports.video_url, reports.severity, reports.preferred_technician_id,
+               reports.issue_type, reports.impact_level, reports.availability_status, reports.availability_note
         FROM reports
         WHERE reports.cluster_id IS NOT NULL
         ORDER BY reports.created_at DESC
@@ -425,17 +457,21 @@ def admin_clusters() -> dict:
     report_map: dict[int, list[dict]] = {}
     for row in reports:
         report_dict = dict(row)
-        photo_urls, primary_photo = parse_photo_field(report_dict.get("photo_url"))
+        photo_urls, primary_photo = parse_asset_field(report_dict.get("photo_url"))
+        video_urls, primary_video = parse_asset_field(report_dict.get("video_url"))
         report_dict["photo_urls"] = photo_urls
         report_dict["photo_url"] = primary_photo
+        report_dict["video_urls"] = video_urls
+        report_dict["video_url"] = primary_video
         report_map.setdefault(row["cluster_id"], []).append(report_dict)
 
     items = []
     for row in rows:
         report_items = report_map.get(row["id"], [])
         item = dict(row)
+        item["eta_minutes"] = row["technician_eta_minutes"]
         item["reports"] = report_items
-        item["technician"] = serialize_technician(row) | {"eta_minutes": row["technician_eta_minutes"], "assignment_note": row["assignment_note"]} if row["technician_id"] else None
+        item["technician"] = serialize_technician(row) | {"eta_minutes": row["technician_eta_minutes"], "estimated_resolution_minutes": row["estimated_resolution_minutes"], "assignment_note": row["assignment_note"]} if row["technician_id"] else None
         if report_items:
             insights = analyze_cluster(report_items, row["utility_type"])
         else:
@@ -443,7 +479,7 @@ def admin_clusters() -> dict:
             insights = analyze_stats(stats, row["utility_type"])
 
         item["priority_reasons"] = insights.reasons
-        item["estimated_resolution_minutes"] = insights.eta_minutes
+        item["estimated_resolution_minutes"] = row["estimated_resolution_minutes"] or insights.eta_minutes
         item["analytics"] = {
             "eta_minutes": insights.eta_minutes,
             "breakdown": insights.breakdown,
@@ -467,7 +503,13 @@ def assign_cluster_endpoint(cluster_id: int, payload: ClusterAssignmentRequest) 
         raise HTTPException(status_code=404, detail="Cluster not found.")
 
     try:
-        technician = assign_cluster(cluster_id, payload.technician_id, payload.eta_minutes, payload.note)
+        technician = update_cluster_assignment(
+            cluster_id,
+            payload.technician_id,
+            payload.eta_minutes,
+            payload.resolution_minutes,
+            payload.note,
+        )
     except ValueError as error:
         raise HTTPException(status_code=400, detail=str(error)) from error
 
@@ -484,3 +526,54 @@ def update_cluster_status(cluster_id: int, payload: ClusterStatusUpdateRequest) 
 
     sync_cluster_status(cluster_id, payload.status)
     return {"message": "Cluster updated."}
+
+
+@app.patch("/reports/{report_id}/availability")
+def update_report_availability_endpoint(
+    report_id: int,
+    payload: ReportAvailabilityUpdateRequest,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    try:
+        update_report_availability(
+            report_id,
+            current_user["id"],
+            payload.availability_status,
+            payload.availability_note.strip(),
+            payload.availability_windows,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return {"message": "Availability updated."}
+
+
+@app.post("/reports/{report_id}/confirm-resolution")
+def confirm_resolution_endpoint(
+    report_id: int,
+    payload: ReportResolutionRequest,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    try:
+        confirm_report_resolution(report_id, current_user["id"], payload.completion_code.strip())
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return {"message": "Resolution confirmed."}
+
+
+@app.post("/reports/{report_id}/review")
+def create_review_endpoint(
+    report_id: int,
+    payload: ReportReviewCreateRequest,
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    try:
+        create_review(
+            report_id,
+            current_user["id"],
+            payload.rating,
+            payload.comment.strip(),
+            payload.tags,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from error
+    return {"message": "Review submitted."}

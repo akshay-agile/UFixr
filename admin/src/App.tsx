@@ -32,6 +32,7 @@ type Technician = {
   specialization: string;
   zone: string;
   eta_minutes?: number;
+  estimated_resolution_minutes?: number;
   assignment_note?: string;
 };
 
@@ -44,6 +45,10 @@ type ClusterReport = {
   status: ClusterStatus;
   photo_url?: string | null;
   photo_urls?: string[];
+  video_url?: string | null;
+  video_urls?: string[];
+  availability_status?: string;
+  availability_note?: string;
 };
 
 type InsightEntry = {
@@ -62,6 +67,7 @@ type Cluster = {
   center_latitude: number;
   center_longitude: number;
   eta_minutes?: number;
+  estimated_resolution_minutes?: number;
   technician?: Technician;
   technician_options?: TechnicianOption[];
   reports?: ClusterReport[];
@@ -211,6 +217,16 @@ function resolveReportPhotos(report: ClusterReport) {
   return rawPhotos.map(normalizeAssetUrl).filter(Boolean);
 }
 
+function resolveReportVideos(report: ClusterReport) {
+  const rawVideos = report.video_urls?.length
+    ? report.video_urls
+    : report.video_url
+    ? [report.video_url]
+    : [];
+
+  return rawVideos.map(normalizeAssetUrl).filter(Boolean);
+}
+
 function normalizeAssetUrl(photoUrl: string | null | undefined) {
   if (!photoUrl) {
     return "";
@@ -236,6 +252,7 @@ function QueueCard({ cluster, isSelected, onSelect }: QueueCardProps) {
   const statusMeta = STATUS_STYLES[cluster.status] ?? { label: cluster.status, bg: "bg-sand", color: "text-dusk" };
   const priority = Math.round(cluster.priority_score);
   const etaMinutes = cluster.eta_minutes ?? cluster.technician?.eta_minutes ?? 45;
+  const resolutionMinutes = cluster.technician?.estimated_resolution_minutes ?? cluster.eta_minutes ?? 90;
 
   return (
     <div
@@ -284,6 +301,12 @@ function QueueCard({ cluster, isSelected, onSelect }: QueueCardProps) {
           <p className="mt-1 font-sora text-lg text-dusk">{cluster.report_count}</p>
         </div>
       </div>
+      <div className="mt-3 flex flex-wrap gap-2 text-[11px] font-semibold text-smoke">
+        <span className="rounded-full bg-[#eef6ff] px-3 py-1 text-[#24539b]">Resolve in ~{resolutionMinutes}m</span>
+        {cluster.reports?.some((report) => (report.video_urls?.length ?? 0) > 0 || report.video_url) ? (
+          <span className="rounded-full bg-[#fff2d8] px-3 py-1 text-[#9a5b00]">Video evidence available</span>
+        ) : null}
+      </div>
     </div>
   );
 }
@@ -316,6 +339,7 @@ function ClusterFocusPanel({ cluster, onAssign, onStatusChange, onZoomToLocation
   const hoursOpen = cluster.opened_hours ?? 0;
   const hoursSinceUpdate = cluster.last_update_hours ?? 0;
   const etaMinutes = cluster.eta_minutes ?? cluster.technician?.eta_minutes ?? 45;
+  const resolutionMinutes = cluster.estimated_resolution_minutes ?? cluster.technician?.estimated_resolution_minutes ?? Math.max(45, etaMinutes + 25);
   const isInProgress = cluster.status === "in_progress";
   const isResolved = cluster.status === "resolved";
   const priorityScore = Math.round(cluster.priority_score);
@@ -395,9 +419,9 @@ function ClusterFocusPanel({ cluster, onAssign, onStatusChange, onZoomToLocation
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div>
             <p className="text-[11px] font-bold uppercase tracking-[0.3em] text-[#b8afa5]">Predicted resolution</p>
-            <p className="font-sora text-3xl font-black text-dusk">{etaMinutes} min</p>
+            <p className="font-sora text-3xl font-black text-dusk">{resolutionMinutes} min</p>
           </div>
-          <span className="text-xs font-semibold text-smoke">Live ETA refreshed every 15s</span>
+          <span className="text-xs font-semibold text-smoke">ETA {etaMinutes} min · refreshed every 15s</span>
         </div>
         <div className="mt-4 h-3 rounded-full bg-[#f4ede3]">
           <div
@@ -510,6 +534,7 @@ function ClusterFocusPanel({ cluster, onAssign, onStatusChange, onZoomToLocation
         <div className="mt-3 space-y-2 overflow-y-auto">
           {(cluster.reports ?? []).slice(0, 4).map((report) => {
             const reportPhotos = resolveReportPhotos(report);
+            const reportVideos = resolveReportVideos(report);
 
             return (
               <div key={report.id} className="rounded-2xl border border-[#f0e6d8] bg-white px-3 py-3">
@@ -539,10 +564,10 @@ function ClusterFocusPanel({ cluster, onAssign, onStatusChange, onZoomToLocation
                     Zoom
                   </button>
                 </div>
-                {reportPhotos.length ? (
+                {reportPhotos.length || reportVideos.length ? (
                   <div className="mt-3">
                     <p className="text-[10px] font-bold uppercase tracking-[0.28em] text-[#b8afa5]">Evidence</p>
-                    <div className="mt-2 grid grid-cols-2 gap-2">
+                    <div className="mt-2 grid grid-cols-1 gap-2 md:grid-cols-2">
                       {reportPhotos.map((photoUrl, index) => (
                         <a
                           key={`${report.id}-${index}`}
@@ -558,6 +583,25 @@ function ClusterFocusPanel({ cluster, onAssign, onStatusChange, onZoomToLocation
                             loading="lazy"
                           />
                         </a>
+                      ))}
+                      {reportVideos.map((videoUrl, index) => (
+                        <div
+                          key={`${report.id}-video-${index}`}
+                          className="overflow-hidden rounded-2xl border border-[#f0e6d8] bg-[#fffaf4]"
+                        >
+                          <video
+                            src={videoUrl}
+                            controls
+                            preload="metadata"
+                            className="h-28 w-full bg-[#1f1410] object-cover"
+                          />
+                          <div className="flex items-center justify-between gap-2 px-3 py-2 text-[11px] font-semibold text-smoke">
+                            <span>Video evidence</span>
+                            <a href={videoUrl} target="_blank" rel="noreferrer" className="text-dusk underline underline-offset-2">
+                              Open
+                            </a>
+                          </div>
+                        </div>
                       ))}
                     </div>
                   </div>
@@ -780,10 +824,11 @@ export default function UFixrDashboard() {
     try {
       const preferred = cluster.technician_options?.find((item) => item.id === technicianId)?.preferred_count ?? 0;
       const eta = Math.max(25, 55 - preferred * 5 - Math.round(cluster.priority_score / 10));
+      const resolution = Math.max(45, eta + 25 + Math.round(cluster.report_count * 6));
       await fetch(`${API_BASE_URL}/admin/clusters/${cluster.id}/assign`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ technician_id: technicianId, eta_minutes: eta, note: preferred > 0 ? `Preferred by ${preferred} reporting user(s)` : "Assigned by dispatcher" }),
+        body: JSON.stringify({ technician_id: technicianId, eta_minutes: eta, resolution_minutes: resolution, note: preferred > 0 ? `Preferred by ${preferred} reporting user(s)` : "Assigned by dispatcher" }),
       });
       await loadClusters();
     } catch (err) {
@@ -852,6 +897,12 @@ export default function UFixrDashboard() {
   const totalAffected = clusters.reduce((sum, cluster) => sum + cluster.estimated_people, 0);
   const criticalCount = clusters.filter((cluster) => cluster.priority_score >= 70 && cluster.status !== "resolved").length;
   const topPriority = Math.max(0, ...clusters.map((cluster) => Math.round(cluster.priority_score)));
+  const visibleMapClusters = filtered.length > 0 ? filtered : clusters;
+  const mapVideoCount = visibleMapClusters.reduce(
+    (sum, cluster) => sum + (cluster.reports ?? []).reduce((reportSum, report) => reportSum + resolveReportVideos(report).length, 0),
+    0
+  );
+  const assignedCount = visibleMapClusters.filter((cluster) => Boolean(cluster.technician)).length;
   const statValues = [activeCount, totalAffected.toLocaleString(), criticalCount, `${topPriority}%`];
 
   return (
@@ -901,8 +952,8 @@ export default function UFixrDashboard() {
           </div>
         </section>
 
-        <section className="grid gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
-          <div ref={mapPanelRef} className="rounded-[32px] glass-panel p-6">
+        <section className="grid items-stretch gap-6 xl:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
+          <div ref={mapPanelRef} className="glass-panel flex h-full flex-col rounded-[32px] p-6">
             <div className="flex flex-wrap items-center justify-between gap-4">
               <div>
                 <p className="text-sm font-semibold text-smoke">Metro live stack</p>
@@ -923,11 +974,28 @@ export default function UFixrDashboard() {
             </div>
             <div className="mt-4 overflow-hidden rounded-[28px] border border-[#eadfd1] bg-white">
               <LiveMap
-                clusters={filtered.length > 0 ? filtered : clusters}
+                clusters={visibleMapClusters}
                 onMapReady={handleMapReady}
                 selectedClusterId={selectedClusterId}
                 onSelectCluster={handleSelectCluster}
               />
+            </div>
+            <div className="mt-4 grid flex-1 gap-4 md:grid-cols-3">
+              <div className="rounded-[26px] border border-[#eadfd1] bg-white/90 p-5">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-smoke">Map coverage</p>
+                <p className="mt-3 font-sora text-3xl font-black text-dusk">{visibleMapClusters.length}</p>
+                <p className="mt-2 text-sm text-smoke">Clusters currently visible in this map view and filter set.</p>
+              </div>
+              <div className="rounded-[26px] border border-[#eadfd1] bg-white/90 p-5">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-smoke">Assigned crews</p>
+                <p className="mt-3 font-sora text-3xl font-black text-dusk">{assignedCount}</p>
+                <p className="mt-2 text-sm text-smoke">Active clusters that already have a technician dispatched.</p>
+              </div>
+              <div className="rounded-[26px] border border-[#eadfd1] bg-white/90 p-5">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.28em] text-smoke">Rich evidence</p>
+                <p className="mt-3 font-sora text-3xl font-black text-dusk">{mapVideoCount}</p>
+                <p className="mt-2 text-sm text-smoke">Video clips available for faster visual diagnosis by dispatch.</p>
+              </div>
             </div>
           </div>
 

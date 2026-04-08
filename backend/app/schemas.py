@@ -31,8 +31,13 @@ class ReportCreateRequest(BaseModel):
     longitude: float
     photo_url: str | None = None
     photo_urls: list[str] | None = None
+    video_url: str | None = None
+    video_urls: list[str] | None = None
     join_cluster_id: int | None = None
     preferred_technician_id: int | None = None
+    availability_status: Literal["unknown", "available", "unavailable", "reschedule_requested"] | None = "unknown"
+    availability_note: str = Field(default="", max_length=160)
+    availability_windows: list[str] | None = None
 
 
 class ClusterStatusUpdateRequest(BaseModel):
@@ -42,4 +47,21 @@ class ClusterStatusUpdateRequest(BaseModel):
 class ClusterAssignmentRequest(BaseModel):
     technician_id: int
     eta_minutes: int = Field(ge=10, le=480)
+    resolution_minutes: int = Field(ge=15, le=1440)
     note: str = Field(default="", max_length=160)
+
+
+class ReportAvailabilityUpdateRequest(BaseModel):
+    availability_status: Literal["available", "unavailable", "reschedule_requested"]
+    availability_note: str = Field(default="", max_length=160)
+    availability_windows: list[str] | None = None
+
+
+class ReportResolutionRequest(BaseModel):
+    completion_code: str = Field(min_length=4, max_length=8)
+
+
+class ReportReviewCreateRequest(BaseModel):
+    rating: int = Field(ge=1, le=5)
+    comment: str = Field(default="", max_length=220)
+    tags: list[str] | None = None

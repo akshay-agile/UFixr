@@ -17,12 +17,24 @@ type ClusterVisual = LiveClusterPoint & { priority_reasons?: string[]; report_co
 type UtilityType = "electricity" | "water";
 type ImpactLevel = "just_me" | "few_homes" | "whole_street" | "dangerous_emergency";
 type IssueOption = { id: string; label: string; desc: string; icon: string; };
+type EvidenceItem = { uri: string; kind: "photo" | "video"; mimeType?: string | null };
+type AvailabilityStatus = "unknown" | "available" | "unavailable" | "reschedule_requested";
 
 type Palette = ReturnType<typeof createPalette>;
 const STORAGE_KEYS = { utility: "reportFault:lastUtility", impact: "reportFault:lastImpact", issueElectricity: "reportFault:lastIssue:electricity", issueWater: "reportFault:lastIssue:water" };
 const MAX_PHOTOS = 4;
+const MAX_VIDEOS = 1;
 const MAX_NOTE_LENGTH = 240;
+const MAX_AVAILABILITY_NOTE = 120;
 const IMAGE_MEDIA_TYPE: ImagePicker.MediaType = "images";
+const VIDEO_MEDIA_TYPE: ImagePicker.MediaType = "videos";
+const AVAILABILITY_OPTIONS: { id: AvailabilityStatus; label: string; desc: string }[] = [
+  { id: "unknown", label: "Later", desc: "I will confirm once a technician is assigned." },
+  { id: "available", label: "Available", desc: "Someone is usually available at this address." },
+  { id: "unavailable", label: "Not available", desc: "Please call before arriving." },
+  { id: "reschedule_requested", label: "Need reschedule", desc: "I may need a different visit window." },
+];
+const AVAILABILITY_WINDOWS = ["9 AM - 12 PM", "12 PM - 3 PM", "3 PM - 6 PM", "6 PM - 9 PM"];
 const UTILITY_OPTIONS: { id: UtilityType; label: string; icon: string; desc: string }[] = [
   { id: "electricity", label: "Electricity", icon: "\u26A1", desc: "Outages, sparks, streetlights" },
   { id: "water", label: "Water", icon: "\uD83D\uDCA7", desc: "Leaks, supply, contamination" },
@@ -110,7 +122,10 @@ export default function ReportFaultScreen() {
   const [issueType, setIssueType] = useState<string>(ISSUE_OPTIONS.electricity[0].id);
   const [impactLevel, setImpactLevel] = useState<ImpactLevel>("few_homes");
   const [description, setDescription] = useState("");
-  const [photoUris, setPhotoUris] = useState<string[]>([]);
+  const [evidenceItems, setEvidenceItems] = useState<EvidenceItem[]>([]);
+  const [availabilityStatus, setAvailabilityStatus] = useState<AvailabilityStatus>("unknown");
+  const [availabilityNote, setAvailabilityNote] = useState("");
+  const [availabilityWindows, setAvailabilityWindows] = useState<string[]>([]);
   const [location, setLocation] = useState<{ latitude: number; longitude: number } | null>(null);
   const [locationLabel, setLocationLabel] = useState("Detecting current location");
   const [refreshingLocation, setRefreshingLocation] = useState(false);
@@ -128,7 +143,10 @@ export default function ReportFaultScreen() {
   const [clusterVisuals, setClusterVisuals] = useState<ClusterVisual[]>([]);
   const [clusterMapLoading, setClusterMapLoading] = useState(true);
   const [showAllIssues, setShowAllIssues] = useState(false);
-  const remainingPhotoSlots = Math.max(0, MAX_PHOTOS - photoUris.length);
+  const photoItems = evidenceItems.filter((item) => item.kind === "photo");
+  const videoItems = evidenceItems.filter((item) => item.kind === "video");
+  const remainingPhotoSlots = Math.max(0, MAX_PHOTOS - photoItems.length);
+  const remainingVideoSlots = Math.max(0, MAX_VIDEOS - videoItems.length);
   const visibleIssueOptions = showAllIssues ? ISSUE_OPTIONS[utilityType] : ISSUE_OPTIONS[utilityType].slice(0, 4);
   const derivedSeverityScore = useMemo(() => derivedSeverity(utilityType, issueType, impactLevel), [impactLevel, issueType, utilityType]);
   const issueLabel = issueType.startsWith("custom_") ? customIssue || "Custom issue" : ISSUE_OPTIONS[utilityType].find((item) => item.id === issueType)?.label ?? "Issue";
@@ -173,15 +191,25 @@ export default function ReportFaultScreen() {
   useEffect(() => { fetchSuggestions(); }, [utilityType]);
   useEffect(() => () => { if (successTimer.current) clearTimeout(successTimer.current); }, []);
 
-  const appendPhotoAssets = (assets: ImagePicker.ImagePickerAsset[] | undefined) => {
+  const appendEvidenceAssets = (assets: ImagePicker.ImagePickerAsset[] | undefined, fallbackKind: "photo" | "video") => {
     if (!assets?.length) return;
-    setPhotoUris((prev) => {
-      const available = MAX_PHOTOS - prev.length; if (available <= 0) return prev;
-      const next = assets.filter((asset) => asset?.uri).slice(0, available).map((asset) => asset.uri);
+    setEvidenceItems((prev) => {
+      let photoLeft = MAX_PHOTOS - prev.filter((item) => item.kind === "photo").length;
+      let videoLeft = MAX_VIDEOS - prev.filter((item) => item.kind === "video").length;
+      const next: EvidenceItem[] = [];
+      for (const asset of assets) {
+        if (!asset?.uri) continue;
+        const kind = asset.type === "video" || fallbackKind === "video" ? "video" : "photo";
+        if (kind === "photo" && photoLeft <= 0) continue;
+        if (kind === "video" && videoLeft <= 0) continue;
+        next.push({ uri: asset.uri, kind, mimeType: asset.mimeType });
+        if (kind === "photo") photoLeft -= 1;
+        if (kind === "video") videoLeft -= 1;
+      }
       return next.length ? [...prev, ...next] : prev;
     });
   };
-  const removePhoto = (uri: string) => setPhotoUris((prev) => prev.filter((item) => item !== uri));
+  const removeEvidence = (uri: string) => setEvidenceItems((prev) => prev.filter((item) => item.uri !== uri));
 
   async function refreshLocation(silent = false) {
     try {
@@ -226,14 +254,24 @@ export default function ReportFaultScreen() {
     const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
     if (!permission.granted) return Alert.alert("Permission needed", "Please allow photo library access.");
     const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: IMAGE_MEDIA_TYPE, allowsMultipleSelection: true, selectionLimit: Math.max(1, remainingPhotoSlots), quality: 0.75 });
-    if (!result.canceled) appendPhotoAssets(result.assets);
+    if (!result.canceled) appendEvidenceAssets(result.assets, "photo");
+  };
+  const pickVideo = async () => {
+    if (remainingVideoSlots <= 0) return Alert.alert("Limit reached", `You can attach up to ${MAX_VIDEOS} video.`);
+    const permission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+    if (!permission.granted) return Alert.alert("Permission needed", "Please allow media library access.");
+    const result = await ImagePicker.launchImageLibraryAsync({ mediaTypes: VIDEO_MEDIA_TYPE, allowsMultipleSelection: false, selectionLimit: 1, quality: 0.7 });
+    if (!result.canceled) appendEvidenceAssets(result.assets, "video");
   };
   const takePicture = async () => {
     if (remainingPhotoSlots <= 0) return Alert.alert("Limit reached", `You can attach up to ${MAX_PHOTOS} photos.`);
     const permission = await ImagePicker.requestCameraPermissionsAsync();
     if (!permission.granted) return Alert.alert("Permission needed", "Please allow camera access.");
     const result = await ImagePicker.launchCameraAsync({ mediaTypes: IMAGE_MEDIA_TYPE, allowsEditing: false, quality: 0.75 });
-    if (!result.canceled) appendPhotoAssets(result.assets);
+    if (!result.canceled) appendEvidenceAssets(result.assets, "photo");
+  };
+  const toggleAvailabilityWindow = (windowLabel: string) => {
+    setAvailabilityWindows((prev) => (prev.includes(windowLabel) ? prev.filter((item) => item !== windowLabel) : [...prev, windowLabel]));
   };
   const onUseQuickTag = (tag: "no_power" | "leakage" | "dangerous_emergency") => {
     if (tag === "leakage") { setUtilityType("water"); setIssueType("leakage"); setImpactLevel("few_homes"); }
@@ -250,14 +288,20 @@ export default function ReportFaultScreen() {
       const coords = (await refreshLocation(true)) ?? location;
       if (!coords) { Alert.alert("Location required", "Please allow location access for accurate reporting."); setSubmitting(false); return; }
       const uploadedPhotoUrls: string[] = [];
-      for (let index = 0; index < photoUris.length; index += 1) {
-        const uri = photoUris[index]; if (!uri) continue;
-        const form = new FormData(); form.append("file", { uri, name: `fault-photo-${index + 1}.jpg`, type: "image/jpeg" } as any);
-        const uploadResponse = await apiRequest<{ photo_url: string }>("/upload", { method: "POST", body: form, isFormData: true });
-        if (uploadResponse.photo_url) uploadedPhotoUrls.push(uploadResponse.photo_url);
+      const uploadedVideoUrls: string[] = [];
+      for (let index = 0; index < evidenceItems.length; index += 1) {
+        const item = evidenceItems[index]; if (!item?.uri) continue;
+        const extension = item.kind === "video" ? ".mp4" : ".jpg";
+        const mimeType = item.mimeType || (item.kind === "video" ? "video/mp4" : "image/jpeg");
+        const form = new FormData();
+        form.append("file", { uri: item.uri, name: `fault-${item.kind}-${index + 1}${extension}`, type: mimeType } as any);
+        const uploadResponse = await apiRequest<{ file_url?: string; photo_url?: string; video_url?: string }>("/upload", { method: "POST", body: form, isFormData: true });
+        const fileUrl = uploadResponse.file_url || uploadResponse.photo_url || uploadResponse.video_url;
+        if (!fileUrl) continue;
+        if (item.kind === "video") uploadedVideoUrls.push(fileUrl); else uploadedPhotoUrls.push(fileUrl);
       }
-      await apiRequest("/reports", { method: "POST", token, body: { utility_type: utilityType, issue_type: issueType, impact_level: impactLevel, title: `${issueLabel} / ${IMPACT_OPTIONS.find((item) => item.id === impactLevel)?.label ?? "Impact"}`, description, latitude: coords.latitude, longitude: coords.longitude, photo_urls: uploadedPhotoUrls, join_cluster_id: joinClusterId, preferred_technician_id: preferredTechnicianId, severity: severityValue } });
-      setDescription(""); setPhotoUris([]); setManualSeverity(false); setImpactLevel("few_homes"); setJoinClusterId(null); setShowSuccessModal(true);
+      await apiRequest("/reports", { method: "POST", token, body: { utility_type: utilityType, issue_type: issueType, impact_level: impactLevel, title: `${issueLabel} / ${IMPACT_OPTIONS.find((item) => item.id === impactLevel)?.label ?? "Impact"}`, description, latitude: coords.latitude, longitude: coords.longitude, photo_urls: uploadedPhotoUrls, video_urls: uploadedVideoUrls, join_cluster_id: joinClusterId, preferred_technician_id: preferredTechnicianId, severity: severityValue, availability_status: availabilityStatus, availability_note: availabilityNote.trim(), availability_windows: availabilityWindows } });
+      setDescription(""); setEvidenceItems([]); setManualSeverity(false); setImpactLevel("few_homes"); setJoinClusterId(null); setAvailabilityStatus("unknown"); setAvailabilityNote(""); setAvailabilityWindows([]); setShowSuccessModal(true);
       if (successTimer.current) clearTimeout(successTimer.current);
       successTimer.current = setTimeout(() => setShowSuccessModal(false), 2200);
       await fetchSuggestions(coords);
@@ -311,10 +355,18 @@ export default function ReportFaultScreen() {
           <SectionHeader eyebrow="Notes" title="Add helpful details" subtitle="Optional, but useful if access or safety is tricky." palette={palette} />
           <View style={[styles.glassCard, { backgroundColor: palette.card, borderColor: palette.border, shadowColor: palette.shadow }]}><TextInput value={description} onChangeText={(text) => setDescription(text.slice(0, MAX_NOTE_LENGTH))} placeholder="Add details (optional)" placeholderTextColor={palette.textFaint} multiline style={[styles.notesInput, { backgroundColor: palette.input, color: palette.text, borderColor: palette.border }]} textAlignVertical="top" /><View style={styles.noteFooter}><Text style={[styles.noteHelper, { color: palette.textMuted }]}>Include landmarks, sounds, smells, or visible damage.</Text><Text style={[styles.noteCounter, { color: palette.textFaint }]}>{noteCount}/{MAX_NOTE_LENGTH}</Text></View></View>
 
-          <SectionHeader eyebrow="Evidence" title="Add photos if you have them" subtitle="A clear photo can speed up verification." palette={palette} />
-          <View style={styles.uploadActionsRow}><Pressable onPress={takePicture} style={[styles.uploadCard, { backgroundColor: palette.primary, borderColor: palette.primaryStrong, shadowColor: palette.primary }]}><Text style={styles.uploadIcon}>{"\uD83D\uDCF8"}</Text><Text style={[styles.uploadTitle, { color: palette.ctaText }]}>Camera</Text><Text style={[styles.uploadSubtitle, { color: "rgba(255,255,255,0.82)" }]}>Capture live evidence</Text></Pressable><Pressable onPress={pickImage} style={[styles.uploadCard, { backgroundColor: palette.card, borderColor: palette.border, shadowColor: palette.shadow }]}><Text style={styles.uploadIcon}>{"\uD83D\uDCC1"}</Text><Text style={[styles.uploadTitle, { color: palette.text }]}>Upload</Text><Text style={[styles.uploadSubtitle, { color: palette.textMuted }]}>Choose from device</Text></Pressable></View>
-          {photoUris.length > 0 ? <View style={styles.previewGrid}>{photoUris.map((uri) => <View key={uri} style={[styles.previewTile, { borderColor: palette.border, backgroundColor: palette.card }]}><Image source={{ uri }} style={styles.previewImage} /><Pressable onPress={() => removePhoto(uri)} style={[styles.previewRemove, { backgroundColor: palette.mapOverlay }]}><Text style={[styles.previewRemoveText, { color: palette.text }]}>{"\u2715"}</Text></Pressable></View>)}</View> : null}
-          <Text style={[styles.previewHint, { color: palette.textMuted }]}>Up to {MAX_PHOTOS} photos. {remainingPhotoSlots} slot{remainingPhotoSlots === 1 ? "" : "s"} left.</Text>
+          <SectionHeader eyebrow="Availability" title="Will someone be there when the technician arrives?" subtitle="This helps dispatch avoid wasted visits and reschedules." palette={palette} />
+          <View style={[styles.glassCard, { backgroundColor: palette.card, borderColor: palette.border, shadowColor: palette.shadow }]}>
+            <View style={styles.availabilityGrid}>{AVAILABILITY_OPTIONS.map((option) => { const selected = option.id === availabilityStatus; return <Pressable key={option.id} onPress={() => setAvailabilityStatus(option.id)} style={[styles.availabilityCard, { backgroundColor: selected ? palette.primarySoft : palette.elevated, borderColor: selected ? palette.primary : palette.border }]}><Text style={[styles.availabilityTitle, { color: palette.text }]}>{option.label}</Text><Text style={[styles.availabilityDesc, { color: palette.textMuted }]}>{option.desc}</Text></Pressable>; })}</View>
+            <Text style={[styles.windowLabel, { color: palette.text }]}>Preferred time slots</Text>
+            <View style={styles.windowRow}>{AVAILABILITY_WINDOWS.map((windowLabel) => { const selected = availabilityWindows.includes(windowLabel); return <Pressable key={windowLabel} onPress={() => toggleAvailabilityWindow(windowLabel)} style={[styles.windowChip, { backgroundColor: selected ? palette.primaryStrong : palette.elevated, borderColor: selected ? palette.primaryStrong : palette.border }]}><Text style={[styles.windowChipText, { color: selected ? palette.ctaText : palette.text }]}>{windowLabel}</Text></Pressable>; })}</View>
+            <TextInput value={availabilityNote} onChangeText={(text) => setAvailabilityNote(text.slice(0, MAX_AVAILABILITY_NOTE))} placeholder="Gate locked, call first, or reschedule notes" placeholderTextColor={palette.textFaint} style={[styles.availabilityInput, { backgroundColor: palette.input, color: palette.text, borderColor: palette.border }]} />
+          </View>
+
+          <SectionHeader eyebrow="Evidence" title="Add photos or video if you have them" subtitle="Rich evidence helps the admin and technician diagnose faster." palette={palette} />
+          <View style={styles.uploadActionsRow}><Pressable onPress={takePicture} style={[styles.uploadCard, { backgroundColor: palette.primary, borderColor: palette.primaryStrong, shadowColor: palette.primary }]}><Text style={styles.uploadIcon}>{"\uD83D\uDCF8"}</Text><Text style={[styles.uploadTitle, { color: palette.ctaText }]}>Camera</Text><Text style={[styles.uploadSubtitle, { color: "rgba(255,255,255,0.82)" }]}>Capture photo evidence</Text></Pressable><Pressable onPress={pickImage} style={[styles.uploadCard, { backgroundColor: palette.card, borderColor: palette.border, shadowColor: palette.shadow }]}><Text style={styles.uploadIcon}>{"\uD83D\uDCC1"}</Text><Text style={[styles.uploadTitle, { color: palette.text }]}>Photos</Text><Text style={[styles.uploadSubtitle, { color: palette.textMuted }]}>Choose from device</Text></Pressable><Pressable onPress={pickVideo} style={[styles.uploadCard, { backgroundColor: palette.card, borderColor: palette.border, shadowColor: palette.shadow }]}><Text style={styles.uploadIcon}>{"\uD83C\uDFA5"}</Text><Text style={[styles.uploadTitle, { color: palette.text }]}>Video</Text><Text style={[styles.uploadSubtitle, { color: palette.textMuted }]}>Attach one short clip</Text></Pressable></View>
+          {evidenceItems.length > 0 ? <View style={styles.previewGrid}>{evidenceItems.map((item) => <View key={item.uri} style={[styles.previewTile, { borderColor: palette.border, backgroundColor: palette.card }]}>{item.kind === "photo" ? <Image source={{ uri: item.uri }} style={styles.previewImage} /> : <View style={[styles.videoPreview, { backgroundColor: palette.elevated }]}><Text style={styles.videoPreviewIcon}>{"\u25B6"}</Text><Text style={[styles.videoPreviewLabel, { color: palette.text }]}>Video evidence</Text></View>}<Pressable onPress={() => removeEvidence(item.uri)} style={[styles.previewRemove, { backgroundColor: palette.mapOverlay }]}><Text style={[styles.previewRemoveText, { color: palette.text }]}>{"\u2715"}</Text></Pressable></View>)}</View> : null}
+          <Text style={[styles.previewHint, { color: palette.textMuted }]}>Up to {MAX_PHOTOS} photos and {MAX_VIDEOS} video. {remainingPhotoSlots} photo slot{remainingPhotoSlots === 1 ? "" : "s"} left, {remainingVideoSlots} video left.</Text>
         </ScrollView>
 
         <View style={[styles.ctaBar, { paddingBottom: Math.max(insets.bottom, 14), backgroundColor: palette.screen, borderTopColor: palette.border }]}><Pressable onPress={onSubmit} disabled={submitting} style={[styles.ctaButton, { shadowColor: palette.primary }]}><View style={styles.ctaGradientBase} /><View style={styles.ctaGradientAccent} /><View style={styles.ctaContent}><View><Text style={styles.ctaLabel}>{joinClusterId ? "Join existing signal" : "Submit new report"}</Text><Text style={styles.ctaSubtext}>{loadingSuggestions ? "Refreshing nearby activity" : technicians.length > 0 ? `Best available crew in ${technicians[0].zone}` : "Dispatch will prioritize based on impact and severity"}</Text></View>{submitting ? <ActivityIndicator color="#fff" /> : <Text style={styles.ctaArrow}>{"\u2192"}</Text>}</View></Pressable></View>
@@ -341,7 +393,9 @@ const styles = StyleSheet.create({
   mapCard: { borderWidth: 1, borderRadius: 28, padding: 14, shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.08, shadowRadius: 24, elevation: 6 }, mapFrame: { overflow: "hidden", borderRadius: 22, height: 210 }, mapOverlayCard: { position: "absolute", left: 12, right: 12, bottom: 12, borderRadius: 18, padding: 14, borderWidth: 1 }, mapOverlayTitle: { fontSize: 14, fontWeight: "800" }, mapOverlaySub: { marginTop: 4, fontSize: 12, lineHeight: 17, fontWeight: "500" },
   locationRow: { flexDirection: "row", alignItems: "center", gap: 12 }, locationBadge: { width: 52, height: 52, borderRadius: 18, alignItems: "center", justifyContent: "center" }, locationBadgeIcon: { fontSize: 22 }, locationTextWrap: { flex: 1 }, locationTitle: { fontSize: 15, fontWeight: "800" }, locationValue: { marginTop: 4, fontSize: 12, lineHeight: 18, fontWeight: "500" }, changeButton: { minWidth: 74, borderWidth: 1, borderRadius: 999, paddingHorizontal: 14, paddingVertical: 10, alignItems: "center" }, changeButtonText: { fontSize: 12, fontWeight: "800" },
   notesInput: { minHeight: 124, borderRadius: 20, borderWidth: 1, paddingHorizontal: 16, paddingVertical: 14, fontSize: 15, fontWeight: "500" }, noteFooter: { marginTop: 12, flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 12 }, noteHelper: { flex: 1, fontSize: 12, lineHeight: 17, fontWeight: "500" }, noteCounter: { fontSize: 12, fontWeight: "700" },
-  uploadActionsRow: { flexDirection: "row", gap: 12 }, uploadCard: { flex: 1, borderWidth: 1, borderRadius: 24, padding: 18, minHeight: 132, shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.12, shadowRadius: 20, elevation: 5 }, uploadIcon: { fontSize: 24 }, uploadTitle: { marginTop: 18, fontSize: 18, fontWeight: "800" }, uploadSubtitle: { marginTop: 6, fontSize: 12, lineHeight: 17, fontWeight: "500" }, previewGrid: { flexDirection: "row", flexWrap: "wrap", gap: 12, marginTop: 14 }, previewTile: { width: "30.8%", aspectRatio: 1, borderRadius: 18, borderWidth: 1, overflow: "hidden" }, previewImage: { width: "100%", height: "100%" }, previewRemove: { position: "absolute", top: 8, right: 8, width: 28, height: 28, borderRadius: 14, alignItems: "center", justifyContent: "center" }, previewRemoveText: { fontSize: 14, fontWeight: "800" }, previewHint: { marginTop: 12, marginBottom: 12, fontSize: 12, fontWeight: "600" },
+  availabilityGrid: { gap: 10 }, availabilityCard: { borderWidth: 1, borderRadius: 18, padding: 14 }, availabilityTitle: { fontSize: 14, fontWeight: "800" }, availabilityDesc: { marginTop: 6, fontSize: 12, lineHeight: 17, fontWeight: "500" }, windowLabel: { marginTop: 16, fontSize: 13, fontWeight: "800" }, windowRow: { marginTop: 12, flexDirection: "row", flexWrap: "wrap", gap: 10 }, windowChip: { borderWidth: 1, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 9 }, windowChipText: { fontSize: 12, fontWeight: "700" }, availabilityInput: { marginTop: 14, borderWidth: 1, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 12, fontSize: 14, fontWeight: "500" },
+  uploadActionsRow: { flexDirection: "row", flexWrap: "wrap", gap: 12 }, uploadCard: { flexGrow: 1, flexBasis: 110, borderWidth: 1, borderRadius: 24, padding: 18, minHeight: 132, shadowOffset: { width: 0, height: 12 }, shadowOpacity: 0.12, shadowRadius: 20, elevation: 5 }, uploadIcon: { fontSize: 24 }, uploadTitle: { marginTop: 18, fontSize: 18, fontWeight: "800" }, uploadSubtitle: { marginTop: 6, fontSize: 12, lineHeight: 17, fontWeight: "500" }, previewGrid: { flexDirection: "row", flexWrap: "wrap", gap: 12, marginTop: 14 }, previewTile: { width: "30.8%", aspectRatio: 1, borderRadius: 18, borderWidth: 1, overflow: "hidden" }, previewImage: { width: "100%", height: "100%" }, previewRemove: { position: "absolute", top: 8, right: 8, width: 28, height: 28, borderRadius: 14, alignItems: "center", justifyContent: "center" }, previewRemoveText: { fontSize: 14, fontWeight: "800" }, previewHint: { marginTop: 12, marginBottom: 12, fontSize: 12, fontWeight: "600" },
+  videoPreview: { flex: 1, alignItems: "center", justifyContent: "center", padding: 10 }, videoPreviewIcon: { fontSize: 26, color: "#4f46e5" }, videoPreviewLabel: { marginTop: 10, fontSize: 12, fontWeight: "800", textAlign: "center" },
   ctaBar: { position: "absolute", left: 0, right: 0, bottom: 0, paddingHorizontal: 20, paddingTop: 10, borderTopWidth: 1 }, ctaButton: { borderRadius: 24, overflow: "hidden", minHeight: 76, shadowOffset: { width: 0, height: 14 }, shadowOpacity: 0.28, shadowRadius: 24, elevation: 8 }, ctaGradientBase: { ...StyleSheet.absoluteFillObject, backgroundColor: "#4f46e5" }, ctaGradientAccent: { position: "absolute", right: -40, top: -10, width: 180, height: 120, borderRadius: 60, backgroundColor: "rgba(37,99,235,0.55)" }, ctaContent: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, paddingVertical: 18 }, ctaLabel: { color: "rgba(255,255,255,0.76)", fontSize: 12, fontWeight: "800", textTransform: "uppercase", letterSpacing: 0.9 }, ctaSubtext: { color: "rgba(255,255,255,0.88)", fontSize: 12, marginTop: 6, fontWeight: "500", maxWidth: 240, lineHeight: 17 }, ctaArrow: { color: "#fff", fontSize: 28, fontWeight: "500" },
   modalBackdrop: { flex: 1, backgroundColor: "rgba(15,23,42,0.4)", justifyContent: "flex-end", padding: 18 }, modalCard: { borderWidth: 1, borderRadius: 28, padding: 18 }, modalHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }, modalTitle: { fontSize: 20, fontWeight: "800" }, modalClose: { fontSize: 20, fontWeight: "700" }, customInput: { minHeight: 150, borderRadius: 20, borderWidth: 1, paddingHorizontal: 16, paddingVertical: 14, fontSize: 15, fontWeight: "500" }, modalAction: { marginTop: 16, borderRadius: 18, paddingVertical: 16, alignItems: "center" }, modalActionText: { color: "#fff", fontSize: 15, fontWeight: "800" },
 });

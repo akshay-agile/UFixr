@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import secrets
 from datetime import datetime, timezone
 from math import asin, cos, radians, sin, sqrt
 
@@ -42,6 +44,27 @@ def create_notification(user_id: int, report_id: int | None, title: str, message
     )
     connection.commit()
     connection.close()
+
+
+def parse_asset_field(value: str | None) -> tuple[list[str], str | None]:
+    if not value:
+        return [], None
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError:
+        return [value], value
+    if isinstance(parsed, list):
+        cleaned = [str(item) for item in parsed if isinstance(item, str) and item]
+        if not cleaned:
+            return [], None
+        return cleaned, cleaned[0]
+    if isinstance(parsed, str) and parsed:
+        return [parsed], parsed
+    return [], None
+
+
+def generate_completion_code() -> str:
+    return f"{secrets.randbelow(9000) + 1000}"
 
 
 def _row_value(row, primary: str, fallback: str):
@@ -256,9 +279,10 @@ def sync_cluster_status(cluster_id: int, status: str) -> None:
 
     label = status.replace("_", " ").title()
     for report in reports:
+        resolved_at = now if status == "resolved" else None
         connection.execute(
-            "UPDATE reports SET status = ?, updated_at = ? WHERE id = ?",
-            (status, now, report["id"]),
+            "UPDATE reports SET status = ?, resolved_at = COALESCE(?, resolved_at), updated_at = ? WHERE id = ?",
+            (status, resolved_at, now, report["id"]),
         )
         record_report_event(
             connection,
@@ -266,7 +290,9 @@ def sync_cluster_status(cluster_id: int, status: str) -> None:
             cluster_id,
             status,
             f"Status changed to {label}",
-            f"The cluster is now marked as {status.replace('_', ' ')}.",
+            "The issue is marked as resolved. Please verify completion with your code and leave a review."
+            if status == "resolved"
+            else f"The cluster is now marked as {status.replace('_', ' ')}.",
             now,
         )
         connection.execute(
@@ -344,6 +370,221 @@ def assign_cluster(cluster_id: int, technician_id: int, eta_minutes: int, note: 
     result = serialize_technician(technician)
     connection.close()
     return result
+
+
+def update_cluster_assignment(cluster_id: int, technician_id: int, eta_minutes: int, resolution_minutes: int, note: str) -> dict:
+    connection = get_connection()
+    now = utc_now()
+    technician = connection.execute("SELECT * FROM technicians WHERE id = ? AND active = 1", (technician_id,)).fetchone()
+    if not technician:
+        connection.close()
+        raise ValueError("Technician not found.")
+
+    connection.execute(
+        """
+        UPDATE clusters
+        SET technician_id = ?, technician_eta_minutes = ?, estimated_resolution_minutes = ?, assignment_note = ?, status = 'assigned', updated_at = ?
+        WHERE id = ?
+        """,
+        (technician_id, eta_minutes, resolution_minutes, note, now, cluster_id),
+    )
+    reports = connection.execute(
+        "SELECT id, user_id FROM reports WHERE cluster_id = ?",
+        (cluster_id,),
+    ).fetchall()
+
+    detail_suffix = (
+        f"Assigned to {technician['name']} ({technician['rating']:.1f}/5), ETA {eta_minutes} min, "
+        f"expected resolution in {resolution_minutes} min."
+    )
+    if note:
+        detail_suffix += f" Note: {note}"
+
+    for report in reports:
+        availability_code = generate_completion_code()
+        connection.execute(
+            """
+            UPDATE reports
+            SET status = 'assigned', completion_code = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (availability_code, now, report["id"]),
+        )
+        record_report_event(
+            connection,
+            report["id"],
+            cluster_id,
+            "assigned",
+            "Technician assigned",
+            detail_suffix.strip(),
+            now,
+        )
+        record_report_event(
+            connection,
+            report["id"],
+            cluster_id,
+            "assigned",
+            "Availability requested",
+            "Please confirm whether someone will be available when the technician arrives.",
+            now,
+        )
+        connection.execute(
+            """
+            INSERT INTO notifications (user_id, report_id, title, message, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (
+                report["user_id"],
+                report["id"],
+                "Technician assigned",
+                f"{technician['name']} is assigned. ETA {eta_minutes} min. Estimated resolution {resolution_minutes} min.",
+                now,
+            ),
+        )
+
+    connection.commit()
+    result = serialize_technician(technician)
+    connection.close()
+    return result
+
+
+def update_report_availability(report_id: int, user_id: int, status: str, note: str, windows: list[str] | None) -> None:
+    connection = get_connection()
+    report = connection.execute(
+        """
+        SELECT reports.id, reports.cluster_id, clusters.technician_id
+        FROM reports
+        LEFT JOIN clusters ON clusters.id = reports.cluster_id
+        WHERE reports.id = ? AND reports.user_id = ?
+        """,
+        (report_id, user_id),
+    ).fetchone()
+    if not report:
+        connection.close()
+        raise ValueError("Report not found.")
+
+    now = utc_now()
+    availability_windows = json.dumps([item for item in (windows or []) if item])
+    connection.execute(
+        """
+        UPDATE reports
+        SET availability_status = ?, availability_note = ?, availability_windows = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (status, note, availability_windows, now, report_id),
+    )
+    window_text = ", ".join([item for item in (windows or []) if item][:3])
+    detail = {
+        "available": "User confirmed availability for the technician visit.",
+        "unavailable": "User is unavailable at the current visit time.",
+        "reschedule_requested": "User requested a reschedule for the technician visit.",
+    }[status]
+    if window_text:
+        detail += f" Preferred windows: {window_text}."
+    if note:
+        detail += f" Note: {note}"
+    record_report_event(connection, report_id, report["cluster_id"], "assigned", "Availability updated", detail, now)
+    connection.commit()
+    connection.close()
+
+
+def confirm_report_resolution(report_id: int, user_id: int, completion_code: str) -> None:
+    connection = get_connection()
+    report = connection.execute(
+        """
+        SELECT reports.id, reports.cluster_id, reports.completion_code
+        FROM reports
+        WHERE reports.id = ? AND reports.user_id = ?
+        """,
+        (report_id, user_id),
+    ).fetchone()
+    if not report:
+        connection.close()
+        raise ValueError("Report not found.")
+    if not report["completion_code"] or report["completion_code"] != completion_code:
+        connection.close()
+        raise ValueError("Invalid completion code.")
+
+    now = utc_now()
+    connection.execute(
+        """
+        UPDATE reports
+        SET completion_confirmed_at = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (now, now, report_id),
+    )
+    record_report_event(
+        connection,
+        report_id,
+        report["cluster_id"],
+        "resolved",
+        "Resolution verified",
+        "The user confirmed that the technician completed the work successfully.",
+        now,
+    )
+    connection.commit()
+    connection.close()
+
+
+def create_review(report_id: int, user_id: int, rating: int, comment: str, tags: list[str] | None) -> None:
+    connection = get_connection()
+    row = connection.execute(
+        """
+        SELECT reports.id, reports.cluster_id, reports.status, reports.completion_confirmed_at,
+               reports.user_id, clusters.technician_id
+        FROM reports
+        LEFT JOIN clusters ON clusters.id = reports.cluster_id
+        WHERE reports.id = ? AND reports.user_id = ?
+        """,
+        (report_id, user_id),
+    ).fetchone()
+    if not row:
+        connection.close()
+        raise ValueError("Report not found.")
+    if row["status"] != "resolved":
+        connection.close()
+        raise ValueError("Review can only be submitted after resolution.")
+    if not row["completion_confirmed_at"]:
+        connection.close()
+        raise ValueError("Please verify completion before submitting a review.")
+    if not row["technician_id"]:
+        connection.close()
+        raise ValueError("No technician is associated with this report.")
+
+    existing = connection.execute("SELECT id FROM technician_reviews WHERE report_id = ?", (report_id,)).fetchone()
+    if existing:
+        connection.close()
+        raise ValueError("Review already submitted for this report.")
+
+    now = utc_now()
+    tag_payload = json.dumps([tag for tag in (tags or []) if tag])
+    connection.execute(
+        """
+        INSERT INTO technician_reviews (report_id, technician_id, user_id, rating, comment, tags, created_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (report_id, row["technician_id"], user_id, rating, comment, tag_payload, now),
+    )
+    aggregate = connection.execute(
+        "SELECT AVG(rating) AS avg_rating FROM technician_reviews WHERE technician_id = ?",
+        (row["technician_id"],),
+    ).fetchone()
+    connection.execute(
+        "UPDATE technicians SET rating = ? WHERE id = ?",
+        (round(float(aggregate["avg_rating"]), 2), row["technician_id"]),
+    )
+    record_report_event(
+        connection,
+        report_id,
+        row["cluster_id"],
+        "resolved",
+        "Review submitted",
+        f"User left a verified {rating}/5 review for the technician.",
+        now,
+    )
+    connection.commit()
+    connection.close()
 
 
 def report_timeline(connection, report_id: int) -> list[dict]:
